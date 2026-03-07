@@ -245,6 +245,8 @@ make test
 |------------|-------|-------------|
 | `test_config.py` | 7 | Config loading, validation, edge cases |
 | `test_pipeline.py` | 6 | HTTP retry, dlt source extraction, error handling |
+| dbt tests | 11 | not_null, unique, temperature range |
+| Soda Core checks | 19 | row_count, missing_count, invalid_count, duplicate_count |
 
 ---
 
@@ -254,7 +256,7 @@ make test
 - [x] Ingestion — OpenWeather API extraction with dlt (13 tests passing)
 - [x] Transformation — dbt staging and mart models (11 dbt tests passing)
 - [x] Orchestration — Airflow DAG for end-to-end pipeline (validated)
-- [ ] Data Quality — Soda Core validation checks
+- [x] Data Quality — Soda Core validation checks (19 checks passing)
 - [ ] Documentation — Full architecture docs, lineage, benchmarks
 
 ---
