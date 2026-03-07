@@ -1,9 +1,9 @@
 x-airflow-common: &airflow-common
   build:
-    context: ..
-    dockerfile: docker/airflow.Dockerfile
+    context: ../..
+    dockerfile: infrastructure/docker/Dockerfile
   env_file:
-    - ../.env
+    - ../../.env
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${POSTGRES_DB:-weather_db}
@@ -13,12 +13,13 @@ x-airflow-common: &airflow-common
     AIRFLOW__API__AUTH_BACKENDS: airflow.providers.fab.auth_manager.api.auth.backend.basic_auth
     PYTHONPATH: /opt/airflow
   volumes:
-    - ../airflow/dags:/opt/airflow/dags
-    - ../airflow/plugins:/opt/airflow/plugins
-    - ../ingestion:/opt/airflow/ingestion
-    - ../dbt:/opt/airflow/dbt
-    - ../data_quality:/opt/airflow/data_quality
-    - ../scripts:/opt/airflow/scripts
+    - ../../orchestration/airflow/dags:/opt/airflow/dags
+    - ../../orchestration/airflow/plugins:/opt/airflow/plugins
+    - ../../ingestion:/opt/airflow/ingestion
+    - ../../transformations/dbt:/opt/airflow/dbt
+    - ../../data_quality:/opt/airflow/data_quality
+    - ../../infrastructure/scripts:/opt/airflow/scripts
+    - ../../tests:/opt/airflow/tests
     - airflow-logs:/opt/airflow/logs
   depends_on:
     postgres:
@@ -37,7 +38,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ../scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+      - ../../infrastructure/scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airflow} -d ${POSTGRES_DB:-weather_db}"]
       interval: 10s

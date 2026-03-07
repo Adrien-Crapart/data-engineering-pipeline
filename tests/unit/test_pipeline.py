@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ingestion.config import PipelineConfig
-from ingestion.openweather_pipeline import _fetch_with_retry, openweather_source
+from ingestion.pipelines.openweather_pipeline import _fetch_with_retry, openweather_source
 
 SAMPLE_CURRENT_WEATHER = {
     "coord": {"lon": 2.3488, "lat": 48.8534},
@@ -42,7 +42,7 @@ def _make_config(cities: list[str] | None = None) -> PipelineConfig:
 class TestFetchWithRetry:
     """Validate retry behaviour on the HTTP helper."""
 
-    @patch("ingestion.openweather_pipeline.requests.get")
+    @patch("ingestion.pipelines.openweather_pipeline.requests.get")
     def test_success_on_first_attempt(self, mock_get):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"result": "ok"}
@@ -53,8 +53,8 @@ class TestFetchWithRetry:
         assert result == {"result": "ok"}
         assert mock_get.call_count == 1
 
-    @patch("ingestion.openweather_pipeline.time.sleep")
-    @patch("ingestion.openweather_pipeline.requests.get")
+    @patch("ingestion.pipelines.openweather_pipeline.time.sleep")
+    @patch("ingestion.pipelines.openweather_pipeline.requests.get")
     def test_retries_on_failure_then_succeeds(self, mock_get, mock_sleep):
         import requests
 
@@ -71,8 +71,8 @@ class TestFetchWithRetry:
         assert result == {"result": "ok"}
         assert mock_get.call_count == 2
 
-    @patch("ingestion.openweather_pipeline.time.sleep")
-    @patch("ingestion.openweather_pipeline.requests.get")
+    @patch("ingestion.pipelines.openweather_pipeline.time.sleep")
+    @patch("ingestion.pipelines.openweather_pipeline.requests.get")
     def test_raises_after_all_retries_exhausted(self, mock_get, mock_sleep):
         import requests
 
@@ -88,7 +88,7 @@ class TestFetchWithRetry:
 class TestOpenweatherSource:
     """Validate dlt source yields correct data."""
 
-    @patch("ingestion.openweather_pipeline._fetch_with_retry")
+    @patch("ingestion.pipelines.openweather_pipeline._fetch_with_retry")
     def test_current_weather_yields_one_per_city(self, mock_fetch):
         mock_fetch.return_value = SAMPLE_CURRENT_WEATHER
         config = _make_config(["Paris", "Lyon"])
@@ -98,7 +98,7 @@ class TestOpenweatherSource:
         assert len(records) == 2
         assert all("_extraction_city" in r for r in records)
 
-    @patch("ingestion.openweather_pipeline._fetch_with_retry")
+    @patch("ingestion.pipelines.openweather_pipeline._fetch_with_retry")
     def test_forecast_yields_one_per_city(self, mock_fetch):
         mock_fetch.return_value = SAMPLE_FORECAST
         config = _make_config(["Paris"])
@@ -108,7 +108,7 @@ class TestOpenweatherSource:
         assert len(records) == 1
         assert records[0]["_extraction_city"] == "Paris"
 
-    @patch("ingestion.openweather_pipeline._fetch_with_retry")
+    @patch("ingestion.pipelines.openweather_pipeline._fetch_with_retry")
     def test_source_continues_on_city_error(self, mock_fetch):
         import requests
 

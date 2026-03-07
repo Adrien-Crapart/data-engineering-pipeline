@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 DBT_DIR = "/opt/airflow/dbt"
 DBT_BIN = "/usr/python/bin/dbt"
 SODA_BIN = "/usr/python/bin/soda"
-DATA_QUALITY_DIR = "/opt/airflow/data_quality"
+DATA_QUALITY_DIR = "/opt/airflow/data_quality/soda"
 
 default_args = {
     "owner": "data-engineering",
@@ -48,7 +48,7 @@ def weather_pipeline():
     @task()
     def extract_weather() -> dict[str, Any]:
         """Run the dlt ingestion pipeline for all configured cities."""
-        from ingestion.openweather_pipeline import run_pipeline
+        from ingestion.pipelines.openweather_pipeline import run_pipeline
 
         start = time.time()
         metrics = run_pipeline()
