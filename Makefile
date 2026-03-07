@@ -28,7 +28,7 @@ psql:
 
 ## Run unit tests inside the scheduler container
 test:
-	$(COMPOSE) exec airflow-scheduler python -m pytest /opt/airflow/ingestion/tests/ -v --tb=short
+	$(COMPOSE) exec airflow-scheduler bash -c "PYTHONPATH=/opt/airflow /usr/python/bin/python -m pytest /opt/airflow/ingestion/tests/ -v --tb=short"
 
 ## Show service status
 status:
