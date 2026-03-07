@@ -150,10 +150,76 @@ All configuration is managed through environment variables. Copy `.env.example` 
 
 ---
 
+## Pipeline Details
+
+### Ingestion (dlt)
+
+The ingestion layer uses [dlt (Data Load Tool)](https://dlthub.com/) to extract weather data from the OpenWeather API and load it into the `raw` schema of PostgreSQL.
+
+**Data sources extracted:**
+
+| Endpoint | Table | Description |
+|----------|-------|-------------|
+| `/data/2.5/weather` | `raw.weather_current` | Current weather per city |
+| `/data/2.5/forecast` | `raw.weather_forecast` | 5-day / 3-hour forecast per city |
+
+**Key features:**
+- Configurable city list via `WEATHER_CITIES` environment variable
+- Exponential backoff retry on API failures (3 retries)
+- Structured logging with extraction time per city
+- Automatic schema inference by dlt
+
+### Data Lineage
+
+```mermaid
+flowchart TD
+    subgraph source [OpenWeather API]
+        EP1["/data/2.5/weather"]
+        EP2["/data/2.5/forecast"]
+    end
+    subgraph raw [raw schema]
+        R1["raw.weather_current"]
+        R2["raw.weather_forecast"]
+    end
+    subgraph staging [staging schema]
+        S1["staging.stg_weather_current"]
+        S2["staging.stg_weather_forecast"]
+    end
+    subgraph mart [mart schema]
+        M1["mart.weather_daily_summary"]
+        M2["mart.city_weather_metrics"]
+    end
+
+    EP1 -->|"dlt extract"| R1
+    EP2 -->|"dlt extract"| R2
+    R1 -->|"dbt: clean + type"| S1
+    R2 -->|"dbt: unnest + clean"| S2
+    S1 -->|"dbt: aggregate"| M1
+    S2 -->|"dbt: aggregate"| M1
+    S1 -->|"dbt: metrics"| M2
+    S2 -->|"dbt: metrics"| M2
+```
+
+---
+
+## Testing
+
+```bash
+# Run unit tests (13 tests covering config validation, retry logic, data extraction)
+make test
+```
+
+| Test suite | Tests | Description |
+|------------|-------|-------------|
+| `test_config.py` | 7 | Config loading, validation, edge cases |
+| `test_pipeline.py` | 6 | HTTP retry, dlt source extraction, error handling |
+
+---
+
 ## Roadmap
 
 - [x] Project setup — Docker, PostgreSQL, Airflow infrastructure
-- [ ] Ingestion — OpenWeather API extraction with dlt
+- [x] Ingestion — OpenWeather API extraction with dlt (13 tests passing)
 - [ ] Transformation — dbt staging and mart models
 - [ ] Orchestration — Airflow DAG for end-to-end pipeline
 - [ ] Data Quality — Soda Core validation checks
