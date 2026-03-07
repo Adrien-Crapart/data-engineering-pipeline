@@ -20,6 +20,7 @@ x-airflow-common: &airflow-common
     - ../../data_quality:/opt/airflow/data_quality
     - ../../infrastructure/scripts:/opt/airflow/scripts
     - ../../tests:/opt/airflow/tests
+    - ../../analytics:/opt/airflow/analytics
     - airflow-logs:/opt/airflow/logs
   depends_on:
     postgres:
