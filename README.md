@@ -182,6 +182,25 @@ The transformation layer uses [dbt-core](https://www.getdbt.com/) to build clean
 
 **Tests:** 11 dbt data tests (not_null, unique, custom temperature range assertion).
 
+### Orchestration (Airflow)
+
+The pipeline is orchestrated by a single Airflow DAG that runs every 6 hours:
+
+```
+extract_weather → dbt_deps → dbt_run → dbt_test → soda_scan → log_pipeline_metrics
+```
+
+| Task | Type | Description |
+|------|------|-------------|
+| `extract_weather` | TaskFlow | dlt ingestion with metrics |
+| `dbt_deps` | BashOperator | Install dbt packages |
+| `dbt_run` | BashOperator | Run staging + mart models |
+| `dbt_test` | BashOperator | Run 11 data tests |
+| `soda_scan` | BashOperator | Soda Core quality checks |
+| `log_pipeline_metrics` | TaskFlow | Pipeline summary logging |
+
+**Access Airflow UI:** http://localhost:8080 (user: `airflow` / password: `airflow`)
+
 ### Data Lineage
 
 ```mermaid
@@ -234,7 +253,7 @@ make test
 - [x] Project setup — Docker, PostgreSQL, Airflow infrastructure
 - [x] Ingestion — OpenWeather API extraction with dlt (13 tests passing)
 - [x] Transformation — dbt staging and mart models (11 dbt tests passing)
-- [ ] Orchestration — Airflow DAG for end-to-end pipeline
+- [x] Orchestration — Airflow DAG for end-to-end pipeline (validated)
 - [ ] Data Quality — Soda Core validation checks
 - [ ] Documentation — Full architecture docs, lineage, benchmarks
 
