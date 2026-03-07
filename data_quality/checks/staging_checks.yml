@@ -1,0 +1,30 @@
+# Soda Core checks for staging layer models.
+# These verify that cleaned data meets quality expectations.
+
+checks for public_staging.stg_weather_current:
+  - row_count > 0:
+      name: Staging current weather has data
+  - missing_count(city_name) = 0:
+      name: No missing city names
+  - missing_count(temperature_celsius) = 0:
+      name: No missing temperatures
+  - missing_count(measured_at) = 0:
+      name: No missing measurement timestamps
+  - invalid_count(temperature_celsius) = 0:
+      name: Temperature is numeric
+      valid min: -90
+      valid max: 60
+  - invalid_count(humidity_percent) = 0:
+      name: Humidity within valid range
+      valid min: 0
+      valid max: 100
+
+checks for public_staging.stg_weather_forecast:
+  - row_count > 0:
+      name: Staging forecast has data
+  - missing_count(city_name) = 0:
+      name: No missing city names in forecast
+  - missing_count(temperature_celsius) = 0:
+      name: No missing forecast temperatures
+  - missing_count(forecast_at) = 0:
+      name: No missing forecast timestamps
