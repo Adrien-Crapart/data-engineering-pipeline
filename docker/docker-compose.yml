@@ -9,7 +9,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:-airflow}@postgres:5432/${POSTGRES_DB:-weather_db}
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__API__AUTH_BACKENDS: airflow.providers.fab.auth_manager.api.auth.backend.basic_auth
     PYTHONPATH: /opt/airflow
   volumes:
     - ../airflow/dags:/opt/airflow/dags
@@ -51,6 +52,16 @@ services:
     command:
       - -c
       - |
+        set -e
+        echo "Waiting for database to be reachable..."
+        for i in $(seq 1 30); do
+          if airflow db check 2>/dev/null; then
+            echo "Database reachable after $${i} attempts"
+            break
+          fi
+          echo "Attempt $${i}/30 - waiting 2s..."
+          sleep 2
+        done
         airflow db migrate
         airflow users create \
           --username airflow \

@@ -1,8 +1,8 @@
 # Pipeline dependencies installed via uv inside the Airflow container.
+apache-airflow-providers-fab>=3.0.0
 dlt[postgres]>=1.0.0
 dbt-postgres>=1.9.0
 soda-core-postgres>=3.3.0
 requests>=2.32.0
 python-dotenv>=1.0.0
 pytest>=8.0.0
-protobuf>=4.25.0,<5.0.0
