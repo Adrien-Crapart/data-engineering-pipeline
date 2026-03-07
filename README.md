@@ -169,6 +169,19 @@ The ingestion layer uses [dlt (Data Load Tool)](https://dlthub.com/) to extract 
 - Structured logging with extraction time per city
 - Automatic schema inference by dlt
 
+### Transformation (dbt)
+
+The transformation layer uses [dbt-core](https://www.getdbt.com/) to build clean, tested data models in PostgreSQL.
+
+| Model | Schema | Type | Description |
+|-------|--------|------|-------------|
+| `stg_weather_current` | staging | view | Cleaned current weather observations |
+| `stg_weather_forecast` | staging | view | Unnested and cleaned forecast entries |
+| `weather_daily_summary` | mart | table | Daily aggregates per city (min/max/avg temp, humidity, wind) |
+| `city_weather_metrics` | mart | table | Overall metrics per city (averages, extremes, counts) |
+
+**Tests:** 11 dbt data tests (not_null, unique, custom temperature range assertion).
+
 ### Data Lineage
 
 ```mermaid
@@ -220,7 +233,7 @@ make test
 
 - [x] Project setup — Docker, PostgreSQL, Airflow infrastructure
 - [x] Ingestion — OpenWeather API extraction with dlt (13 tests passing)
-- [ ] Transformation — dbt staging and mart models
+- [x] Transformation — dbt staging and mart models (11 dbt tests passing)
 - [ ] Orchestration — Airflow DAG for end-to-end pipeline
 - [ ] Data Quality — Soda Core validation checks
 - [ ] Documentation — Full architecture docs, lineage, benchmarks
