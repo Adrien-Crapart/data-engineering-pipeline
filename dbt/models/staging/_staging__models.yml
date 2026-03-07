@@ -1,0 +1,50 @@
+version: 2
+
+models:
+  - name: stg_weather_current
+    description: >
+      Cleaned current weather observations with properly named columns
+      and typed values. One row per city per extraction.
+    columns:
+      - name: city_name
+        description: City name returned by the API.
+        tests:
+          - not_null
+      - name: country_code
+        description: ISO 3166 country code.
+      - name: temperature_celsius
+        description: Current temperature in Celsius.
+        tests:
+          - not_null
+      - name: feels_like_celsius
+        description: Perceived temperature in Celsius.
+      - name: humidity_percent
+        description: Humidity percentage (0-100).
+      - name: pressure_hpa
+        description: Atmospheric pressure in hPa.
+      - name: wind_speed_ms
+        description: Wind speed in meters per second.
+      - name: weather_condition
+        description: Main weather condition (e.g. Clear, Rain, Snow).
+      - name: measured_at
+        description: Timestamp of the observation (UTC).
+        tests:
+          - not_null
+
+  - name: stg_weather_forecast
+    description: >
+      Cleaned and unnested forecast entries. One row per city per
+      3-hour forecast slot.
+    columns:
+      - name: city_name
+        description: City name from the forecast response.
+        tests:
+          - not_null
+      - name: temperature_celsius
+        description: Forecasted temperature in Celsius.
+        tests:
+          - not_null
+      - name: forecast_at
+        description: Timestamp of the forecast slot (UTC).
+        tests:
+          - not_null
