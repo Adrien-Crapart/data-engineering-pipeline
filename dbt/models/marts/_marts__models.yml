@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: weather_daily_summary
+    description: >
+      Daily weather summary per city. Aggregates current observations
+      and forecast data into min/max/avg metrics for each day.
+    columns:
+      - name: city_name
+        description: City name.
+        tests:
+          - not_null
+      - name: date_day
+        description: Calendar date of the summary.
+        tests:
+          - not_null
+      - name: avg_temperature_celsius
+        description: Average temperature for the day.
+      - name: min_temperature_celsius
+        description: Minimum temperature for the day.
+      - name: max_temperature_celsius
+        description: Maximum temperature for the day.
+      - name: observation_count
+        description: Number of observations aggregated.
+
+  - name: city_weather_metrics
+    description: >
+      Aggregated weather metrics per city across all available data.
+      Useful for city comparison dashboards.
+    columns:
+      - name: city_name
+        description: City name.
+        tests:
+          - not_null
+          - unique
+      - name: total_observations
+        description: Total number of weather records.
+      - name: avg_temperature_celsius
+        description: Overall average temperature.
+      - name: avg_humidity_percent
+        description: Overall average humidity.

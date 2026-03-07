@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: Raw weather data loaded by dlt from the OpenWeather API.
+    tables:
+      - name: weather_current
+        description: Current weather observations per city.
+      - name: weather_forecast
+        description: 5-day / 3-hour forecast data per city (parent table).
+      - name: weather_forecast__list
+        description: Unnested forecast entries (child table auto-created by dlt).
