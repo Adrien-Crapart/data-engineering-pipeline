@@ -4,7 +4,7 @@
 # Weather Data Engineering Pipeline - Makefile
 # ============================================================
 
-COMPOSE = docker compose --env-file .env -f docker/docker-compose.yml
+COMPOSE = docker compose --env-file .env -f infrastructure/docker/docker-compose.yml
 
 ## Build images without starting
 build:
@@ -28,7 +28,7 @@ psql:
 
 ## Run unit tests inside the scheduler container
 test:
-	$(COMPOSE) exec airflow-scheduler bash -c "PYTHONPATH=/opt/airflow /usr/python/bin/python -m pytest /opt/airflow/ingestion/tests/ -v --tb=short"
+	$(COMPOSE) exec airflow-scheduler bash -c "PYTHONPATH=/opt/airflow /usr/python/bin/python -m pytest /opt/airflow/tests/ -v --tb=short"
 
 ## Show service status
 status:
