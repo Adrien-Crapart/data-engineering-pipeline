@@ -1,0 +1,26 @@
+# Soda Core checks for mart layer models.
+# These verify analytical model consistency.
+
+checks for public_mart.weather_daily_summary:
+  - row_count > 0:
+      name: Daily summary has data
+  - missing_count(city_name) = 0:
+      name: No missing city names in daily summary
+  - missing_count(date_day) = 0:
+      name: No missing dates in daily summary
+  - missing_count(avg_temperature_celsius) = 0:
+      name: No missing avg temperatures
+  - invalid_count(observation_count) = 0:
+      name: Observation count is positive
+      valid min: 1
+
+checks for public_mart.city_weather_metrics:
+  - row_count > 0:
+      name: City metrics has data
+  - duplicate_count(city_name) = 0:
+      name: No duplicate cities in metrics
+  - missing_count(total_observations) = 0:
+      name: No missing observation counts
+  - invalid_count(total_observations) = 0:
+      name: Total observations is positive
+      valid min: 1
