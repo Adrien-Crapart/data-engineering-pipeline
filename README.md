@@ -5,14 +5,16 @@
 ![dbt](https://img.shields.io/badge/dbt-1.10-ff694b?logo=dbt)
 ![dlt](https://img.shields.io/badge/dlt-1.23-blue)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql)
+![MinIO](https://img.shields.io/badge/MinIO-S3_Data_Lake-red?logo=minio)
+![Prometheus](https://img.shields.io/badge/Prometheus-v3.10-orange?logo=prometheus)
+![Grafana](https://img.shields.io/badge/Grafana-12.4-F46800?logo=grafana)
 ![Soda](https://img.shields.io/badge/Soda_Core-3.5-green)
 ![DuckDB](https://img.shields.io/badge/DuckDB-1.x-yellow?logo=duckdb)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)
-![uv](https://img.shields.io/badge/uv-fast_installer-blueviolet)
-![Tests](https://img.shields.io/badge/tests-43_passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-86_passing-brightgreen)
 
-> Production-grade weather data pipeline demonstrating modern Data Engineering best practices.  
-> **API → Ingestion → Storage → Transformation → Quality → Orchestration → Analytics**
+> Production-grade weather data pipeline demonstrating modern Data Engineering best practices.
+> **API → Data Lake → Warehouse → Transformations → Quality → Observability → Catalog**
 
 ---
 
@@ -20,33 +22,34 @@
 
 ```mermaid
 graph LR
-    A[OpenWeather API] -->|dlt| B[(PostgreSQL)]
-    B -->|raw| C[dbt Transformations]
-    C -->|staging + analytics| D[Data Quality]
-    D -->|Soda Core| E[Airflow Orchestration]
-    E -->|schedule| A
-    B -->|query| F[DuckDB Analytics]
-
-    style A fill:#e1f5fe
-    style B fill:#fff3e0
-    style C fill:#e8f5e9
-    style D fill:#fce4ec
-    style E fill:#f3e5f5
-    style F fill:#fffde7
+    A[OpenWeather API] -->|dlt + contracts| B[MinIO Data Lake]
+    B -->|raw JSON archive| C[(PostgreSQL)]
+    C -->|raw schema| D["dbt (DockerOperator)"]
+    D -->|staging + mart| E["Soda + Elementary (DockerOperator)"]
+    E --> F[Prometheus + Grafana]
+    F --> G[OpenMetadata Catalog]
+    H[Airflow] -->|orchestrates| A
+    H -->|orchestrates| D
+    H -->|orchestrates| E
+    H -->|orchestrates| G
+    C -->|replay| I[Replay Pipeline]
 ```
 
 ## Technology Stack
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Orchestration | Apache Airflow 3.1 | DAG scheduling & monitoring |
+| Orchestration | Apache Airflow 3.1 | DAG scheduling and monitoring |
 | Ingestion | dlt (Data Load Tool) | API extraction with schema management |
-| Storage | PostgreSQL 16 | Data warehouse with layered schemas |
-| Transformation | dbt-core | SQL models: staging → analytics |
-| Data Quality | Soda Core + Great Expectations | Automated data validation |
-| Analytics | DuckDB | Fast local analytical queries |
-| Infrastructure | Docker Compose | Reproducible environment |
-| Package Mgmt | uv | Fast Python dependency management |
+| Data Lake | MinIO (S3-compatible) | Immutable raw data archive |
+| Warehouse | PostgreSQL 16 | Layered schemas (raw, staging, mart) |
+| Transformation | dbt-core (DockerOperator) | SQL models: staging → mart |
+| Data Contracts | YAML + Python validator | Schema governance before storage |
+| Data Quality | Soda Core + Great Expectations + Elementary | Automated validation and anomaly detection |
+| Monitoring | Prometheus + Grafana | Pipeline metrics, dashboards, alerting |
+| Metadata Catalog | OpenMetadata | Data catalog, lineage, profiling |
+| Infrastructure | Docker Compose | Reproducible, versioned containers |
+| CI/CD | GitHub Actions | Lint, test, build, dbt compile |
 
 ## Quick Start
 
@@ -59,155 +62,105 @@ cd data-engineering-pipeline
 cp .env.example .env
 # Edit .env with your OpenWeather API key (free at openweathermap.org/api)
 
-# 3. Start the pipeline
+# 3. Start the core platform
 make up
 
-# 4. Open Airflow UI
-# http://localhost:8080 (login: airflow / airflow)
+# 4. (Optional) Start with OpenMetadata catalog
+make up-full
 ```
+
+### Service URLs
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Airflow UI | http://localhost:8080 | airflow / airflow |
+| MinIO Console | http://localhost:9001 | minioadmin / minioadmin |
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | — |
+| OpenMetadata | http://localhost:8585 | — |
 
 ## Project Structure
 
 ```
 data-engineering-pipeline/
-│
-├── README.md                          # Project overview
-├── LICENSE
-├── .env.example                       # Environment template
-├── pyproject.toml                     # Python project config
-├── requirements.txt                   # Dependencies
-├── Makefile                           # Developer commands
-│
-├── docs/                              # Documentation
-│   ├── architecture.md                # System design
-│   ├── pipeline.md                    # DAG documentation
-│   ├── lineage.md                     # Data lineage
-│   └── decisions/
-│       └── adr_001_architecture.md    # Architecture Decision Record
-│
-├── infrastructure/                    # Infrastructure as Code
-│   ├── docker/
-│   │   ├── Dockerfile                 # Custom Airflow image
-│   │   └── docker-compose.yml         # Service definitions
-│   └── scripts/
-│       ├── init_db.sql                # Schema initialization
-│       └── seed_test_data.sql         # Test data
-│
-├── ingestion/                         # Data extraction
-│   ├── config.py                      # Pipeline configuration
-│   ├── pipelines/
-│   │   └── openweather_pipeline.py    # dlt pipeline
-│   ├── sources/                       # External data sources
-│   └── schemas/                       # Data schemas
-│
-├── orchestration/                     # Workflow management
-│   └── airflow/
-│       ├── dags/
-│       │   └── weather_pipeline_dag.py
-│       └── plugins/
-│
-├── transformations/                   # Data modeling
-│   └── dbt/
-│       ├── models/
-│       │   ├── staging/               # Cleaned views
-│       │   └── marts/                 # Analytics tables
-│       └── tests/                     # dbt tests
-│
-├── data_quality/                      # Data validation
-│   ├── soda/                          # Soda Core checks
-│   │   ├── configuration.yml
-│   │   └── checks/
-│   └── expectations/                  # Great Expectations
-│
-├── analytics/                         # Example analytics
-│   └── example_queries.sql            # Ready-to-use queries
-│
-├── monitoring/                        # Observability
-│   ├── metrics/
-│   └── logging/
-│
-├── tests/                             # Test suites
-│   ├── unit/                          # Unit tests
-│   └── integration/                   # Integration tests
-│
-└── scripts/                           # Utility scripts
-    ├── run_pipeline.sh                # Manual pipeline run
-    └── setup_env.sh                   # Environment setup
+├── analytics/           — DuckDB local analytics engine
+├── contracts/           — Data contract YAML definitions and validator
+├── cursor/              — Cursor AI rules for project conventions
+├── data_quality/        — Soda Core checks and Great Expectations suites
+├── docs/                — Architecture, pipeline, lineage, ADR documentation
+├── infrastructure/      — Docker, Compose, init scripts, processing Dockerfile
+├── ingestion/           — dlt pipelines, config, MinIO storage client
+├── metadata/            — OpenMetadata ingestion configuration
+├── monitoring/          — Prometheus config, Grafana dashboards, metrics exporter
+├── orchestration/       — Airflow DAGs (weather, replay, metadata)
+├── replay/              — Historical data replay from MinIO data lake
+├── scripts/             — Utility shell scripts (setup, manual runs)
+├── tests/               — Unit and integration tests (86+ tests)
+└── transformations/     — dbt models (staging, marts), tests, Elementary
 ```
+
+Each folder contains a `README.md` with detailed documentation.
+
+## Pipeline Flow
+
+```
+extract_weather → dbt_deps → dbt_run → dbt_test → soda_scan → elementary_report → push_metrics
+```
+
+- **extract_weather**: dlt ingestion → validate contracts → archive to MinIO → load to PostgreSQL
+- **dbt_***: Run in isolated Docker container via `DockerOperator`
+- **soda_scan**: Run in isolated Docker container via `DockerOperator`
+- **elementary_report**: Run in isolated Docker container via `DockerOperator`
+- **push_metrics**: Push Prometheus metrics to Pushgateway
+
+## Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| DockerOperator for processing | Airflow orchestrates only; dbt/Soda run in isolated containers |
+| Pinned Docker image versions | Reproducible builds, no surprise breakages |
+| MinIO as raw data lake | Immutable, replayable, auditable raw data archive |
+| Data contracts before storage | Schema governance catches issues at ingestion time |
+| Separate OpenMetadata compose | Lightweight core stack; catalog is optional for dev |
+| Elementary for dbt observability | Volume anomalies, schema changes, freshness monitoring |
 
 ## Data Layers
 
-| Schema | Layer | Description | Examples |
-|--------|-------|-------------|----------|
-| `raw` | Raw | Unmodified API responses | `weather_current`, `weather_forecast` |
-| `staging` | Staging | Cleaned, typed, structured | `stg_weather_current`, `stg_weather_forecast` |
-| `analytics` | Analytics | Business-ready aggregations | `weather_daily_summary`, `city_weather_metrics` |
-
-## Pipeline Details
-
-### Ingestion (dlt)
-- Extracts current weather + 5-day forecast for configurable cities
-- Automatic schema inference and evolution
-- Built-in retry logic with exponential backoff
-- Structured logging with extraction metrics
-
-### Transformation (dbt)
-- **Staging models:** clean, cast, and deduplicate raw data
-- **Analytics models:** daily summaries, city-level metrics
-- Full test coverage with generic and singular tests
-- Source freshness monitoring
-
-### Data Quality
-- **Soda Core:** row counts, null checks, valid ranges, duplicate detection
-- **Great Expectations:** comprehensive expectation suites
-- Integrated into the Airflow DAG as validation gates
-
-### Orchestration (Airflow 3)
-```
-extract_weather → dbt_deps → dbt_run → dbt_test → soda_scan → log_metrics
-```
-- TaskFlow API for Python tasks
-- BashOperator for dbt and Soda commands
-- 6-hour schedule with retry logic
-- FAB authentication (username/password login)
+| Schema | Layer | Description |
+|--------|-------|-------------|
+| `raw` | Raw | Unmodified API responses loaded by dlt |
+| `staging` | Staging | Cleaned, typed, renamed views |
+| `mart` | Mart | Business-ready analytical tables |
+| `elementary` | Observability | dbt model monitoring metadata |
 
 ## Testing
 
 | Category | Tool | Count | Scope |
 |----------|------|-------|-------|
-| Unit Tests | pytest | 13 | Config validation, API mocks, pipeline logic |
+| Unit Tests | pytest | 43+ | Config, pipeline, contracts, MinIO client, metrics, replay, DAGs |
 | dbt Tests | dbt test | 11 | Schema tests, data integrity, singular tests |
 | Data Quality | Soda Core | 19 | Row counts, nulls, ranges, duplicates |
-| **Total** | | **43** | |
+| Elementary | elementary | 7+ | Volume anomalies, schema changes |
+| CI/CD | GitHub Actions | 5 jobs | Lint, test, Docker build, dbt compile, contract validation |
 
 ## Available Commands
 
 ```bash
-make up        # Start all services (build + detach)
-make down      # Stop and remove all services + volumes
-make build     # Build Docker images
-make logs      # Follow service logs
-make psql      # Open PostgreSQL shell
-make test      # Run unit tests
-make status    # Show service status
-make restart   # Restart all services
-make clean     # Full cleanup (containers + images + volumes)
+make up          # Start core services (Airflow, PostgreSQL, MinIO, Prometheus, Grafana)
+make up-full     # Start all services including OpenMetadata
+make down        # Stop core services
+make down-full   # Stop all services including OpenMetadata
+make build       # Build Docker images
+make logs        # Follow service logs
+make psql        # Open PostgreSQL shell
+make test        # Run unit tests in Docker
+make status      # Show service status
+make clean       # Full cleanup (containers + images + volumes)
 ```
-
-## Configuration
-
-Copy `.env.example` to `.env` and configure:
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `OPENWEATHER_API_KEY` | API key from openweathermap.org | Yes |
-| `WEATHER_CITIES` | Comma-separated city list | Yes |
-| `POSTGRES_*` | Database credentials | No (defaults provided) |
-| `AIRFLOW__CORE__FERNET_KEY` | Encryption key | No (default provided) |
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — System design and Docker services
+- [Architecture](docs/architecture.md) — System design and service topology
 - [Pipeline](docs/pipeline.md) — DAG details, task graph, error handling
 - [Data Lineage](docs/lineage.md) — End-to-end and column-level lineage
 - [ADR-001](docs/decisions/adr_001_architecture.md) — Architecture decisions
@@ -217,32 +170,27 @@ Copy `.env.example` to `.env` and configure:
 Feature branching strategy with conventional commits:
 
 ```
-main
+master
 ├── feature/project-setup
 ├── feature/openweather-ingestion
 ├── feature/dbt-transformations
 ├── feature/airflow-orchestration
 ├── feature/data-quality
-├── feature/documentation
-├── feature/fix-airflow-auth
-├── feature/restructure-project
-├── feature/add-duckdb
-└── feature/add-great-expectations
+├── feature/minio-data-lake
+├── feature/data-contracts
+├── feature/airflow-remote-logs
+├── feature/replay-system
+├── feature/monitoring
+├── feature/observability
+├── feature/openmetadata-catalog
+├── feature/ci-cd
+├── fix/cursor-rules
+├── fix/docker-versioning
+├── fix/folder-documentation
+├── fix/add-missing-tests
+├── fix/airflow-docker-operator
+└── fix/update-documentation
 ```
-
-## What This Demonstrates
-
-| Skill | Implementation |
-|-------|---------------|
-| Data Ingestion | dlt pipeline with retry, logging, metrics |
-| Data Modeling | dbt staging → analytics with tests |
-| Orchestration | Airflow 3 DAG with TaskFlow API |
-| Data Quality | Soda Core + Great Expectations |
-| Analytics | DuckDB queries on pipeline output |
-| Infrastructure | Docker Compose, custom images, uv |
-| Documentation | README, ADRs, architecture diagrams |
-| Testing | pytest, dbt tests, Soda checks |
-| Version Control | Feature branches, conventional commits |
 
 ---
 
