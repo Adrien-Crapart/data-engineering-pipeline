@@ -11,9 +11,9 @@ when generating or modifying code in this repository.
 
 | File | Scope |
 |------|-------|
-| `rules/docker.md` | Docker image versioning, Dockerfile and Compose best practices |
-| `rules/testing.md` | Mandatory testing, test locations, pre-merge checklist |
-| `rules/documentation.md` | English documentation, folder READMEs, architecture docs |
-| `rules/git-workflow.md` | Branching strategy, conventional commits, merge requirements |
-| `rules/airflow.md` | Orchestration vs processing, DockerOperator, DAG standards |
-| `rules/project-structure.md` | Root-level folder responsibilities and naming |
+| `rules/docker.mdc` | Docker image versioning, Dockerfile and Compose best practices |
+| `rules/testing.mdc` | Mandatory testing, test locations, pre-merge checklist |
+| `rules/documentation.mdc` | English documentation, folder READMEs, architecture docs |
+| `rules/git-workflow.mdc` | Branching strategy, conventional commits, merge requirements |
+| `rules/airflow.mdc` | Orchestration vs processing, DockerOperator, DAG standards |
+| `rules/project-structure.mdc` | Root-level folder responsibilities and naming |
