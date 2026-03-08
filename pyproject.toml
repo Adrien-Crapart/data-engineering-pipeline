@@ -3,7 +3,7 @@ name = "weather-data-pipeline"
 version = "1.0.0"
 description = "Production-grade weather data pipeline: API → ingestion → storage → transformation → quality → orchestration"
 requires-python = ">=3.12"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Adrien"},
 ]
@@ -44,6 +44,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
+[tool.setuptools.packages.find]
+include = ["ingestion*", "contracts*", "replay*", "monitoring*", "analytics*", "data_quality*"]
+
 [build-system]
 requires = ["setuptools>=69.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
