@@ -1,5 +1,6 @@
 # Pipeline dependencies installed via uv inside the Airflow container.
 apache-airflow-providers-fab>=3.0.0
+apache-airflow-providers-amazon>=9.0.0
 dlt[postgres]>=1.0.0
 dbt-postgres>=1.9.0
 soda-core-postgres>=3.3.0

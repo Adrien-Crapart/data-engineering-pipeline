@@ -12,6 +12,13 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__API__AUTH_BACKENDS: airflow.providers.fab.auth_manager.api.auth.backend.basic_auth
     AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR: "true"
+    AIRFLOW__LOGGING__REMOTE_LOGGING: "true"
+    AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: s3://airflow-logs
+    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: minio_default
+    AIRFLOW__LOGGING__ENCRYPT_S3_LOGS: "false"
+    AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+    AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    AWS_ENDPOINT_URL_S3: http://minio:9000
     PYTHONPATH: /opt/airflow
   volumes:
     - ../../orchestration/airflow/dags:/opt/airflow/dags
@@ -76,6 +83,9 @@ services:
           --lastname User \
           --role Admin \
           --email admin@example.com || true
+        airflow connections add minio_default \
+          --conn-type aws \
+          --conn-extra '{"endpoint_url": "http://minio:9000", "aws_access_key_id": "minioadmin", "aws_secret_access_key": "minioadmin"}' || true
     restart: "no"
 
   airflow-api-server:
