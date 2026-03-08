@@ -1,0 +1,31 @@
+# Git Workflow Standards
+
+## Branching Strategy
+
+- **Never** commit directly to `master` or `main`.
+- Use feature branches: `feature/<component-name>`.
+- Use fix branches: `fix/<issue-description>`.
+- Each branch must implement or fix **one** logical component.
+
+## Commit Messages
+
+- Use **conventional commits** format:
+  - `feat(<scope>): <description>` for new features.
+  - `fix(<scope>): <description>` for bug fixes.
+  - `docs(<scope>): <description>` for documentation changes.
+  - `refactor(<scope>): <description>` for refactoring.
+  - `test(<scope>): <description>` for test additions.
+  - `chore(<scope>): <description>` for maintenance tasks.
+
+## Pre-Merge Requirements
+
+1. All tests must pass (`pytest tests/ -v`).
+2. Linting must pass (`ruff check . && ruff format --check .`).
+3. Documentation must be updated if the change affects architecture, pipeline flow, or folder structure.
+4. Docker images must build successfully if infrastructure was modified.
+5. Branch must be up to date with `master` before merging.
+
+## Merge Strategy
+
+- Merge feature/fix branches into `master` with a merge commit.
+- Merge commit message format: `Merge <branch-name>: <short description>`.

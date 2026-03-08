@@ -1,0 +1,32 @@
+# Project Structure Standards
+
+## Root-Level Folders
+
+Every root-level folder must:
+1. Have a clear, single responsibility.
+2. Contain a `README.md` in English explaining its purpose.
+3. Follow a consistent naming convention (lowercase, hyphens or underscores).
+
+## Standard Layout
+
+```
+analytics/          — Analytical queries and DuckDB local analytics engine
+contracts/          — Data contract definitions (YAML) and validation logic
+data_quality/       — Data quality checks (Soda Core, Great Expectations)
+docs/               — Project documentation (architecture, pipeline, lineage, ADRs)
+infrastructure/     — Docker, docker-compose, init scripts, Dockerfiles
+ingestion/          — Data ingestion pipelines and storage clients
+metadata/           — OpenMetadata configuration for catalog and lineage
+monitoring/         — Prometheus, Grafana dashboards, metrics exporters
+orchestration/      — Airflow DAGs and plugins
+replay/             — Historical data replay and backfill modules
+scripts/            — Utility shell scripts (setup, manual runs)
+tests/              — Unit and integration tests
+transformations/    — dbt models, seeds, tests, macros
+```
+
+## Adding New Folders
+
+- Justify the folder at root level; prefer nesting under existing folders.
+- Always add a `README.md` before the first commit.
+- Update the root `README.md` project layout section.
