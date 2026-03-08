@@ -82,17 +82,31 @@ def weather_pipeline():
     )
 
     @task()
-    def log_pipeline_metrics(extraction_metrics: dict[str, Any]) -> None:
-        """Log final pipeline metrics summary."""
+    def push_metrics(extraction_metrics: dict[str, Any]) -> None:
+        """Push pipeline metrics to Prometheus and log summary."""
+        from monitoring.metrics.exporter import (
+            push_metrics as _push,
+            record_pipeline_run,
+        )
+
+        duration = extraction_metrics.get("task_duration_seconds", 0)
+        success = extraction_metrics.get("status") == "success"
+        record_pipeline_run("weather_pipeline", duration, success)
+
+        try:
+            _push()
+        except Exception:
+            logger.warning("Prometheus push failed – metrics not exported", exc_info=True)
+
         logger.info("=" * 60)
         logger.info("PIPELINE RUN COMPLETE")
         logger.info("Extraction: %s", extraction_metrics.get("status", "unknown"))
-        logger.info("Duration: %ss", extraction_metrics.get("task_duration_seconds", "?"))
+        logger.info("Duration: %ss", duration)
         logger.info("Cities: %s", extraction_metrics.get("cities", []))
         logger.info("=" * 60)
 
     extraction = extract_weather()
-    extraction >> dbt_deps >> dbt_run >> dbt_test >> soda_scan >> log_pipeline_metrics(extraction)
+    extraction >> dbt_deps >> dbt_run >> dbt_test >> soda_scan >> push_metrics(extraction)
 
 
 weather_pipeline()

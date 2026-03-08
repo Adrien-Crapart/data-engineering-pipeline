@@ -1,0 +1,49 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Pipeline Alerts
+    folder: Weather Pipeline
+    interval: 5m
+    rules:
+      - uid: pipeline-failure-alert
+        title: Pipeline Failure
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: pipeline_last_run_success == 0
+              intervalMs: 1000
+              maxDataPoints: 43200
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "Weather pipeline last run failed"
+        labels:
+          severity: critical
+
+      - uid: data-freshness-alert
+        title: Data Freshness SLA Breach
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: data_freshness_seconds > 21600
+              intervalMs: 1000
+              maxDataPoints: 43200
+        noDataState: OK
+        execErrState: Alerting
+        for: 5m
+        annotations:
+          summary: "Data freshness exceeds 6-hour SLA"
+        labels:
+          severity: warning
