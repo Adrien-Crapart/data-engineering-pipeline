@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.6.6 /uv /usr/local/bin/uv
+
+RUN uv pip install --system --no-cache \
+    "dlt[postgres]>=1.0.0" \
+    "minio>=7.2.0" \
+    "pyyaml>=6.0" \
+    "requests>=2.32.0" \
+    "python-dotenv>=1.0.0" \
+    "prometheus_client>=0.20.0"
+
+WORKDIR /app
+
+ENTRYPOINT ["bash", "-c"]

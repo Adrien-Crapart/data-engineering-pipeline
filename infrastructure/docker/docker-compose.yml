@@ -14,23 +14,17 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR: "true"
     AIRFLOW__LOGGING__REMOTE_LOGGING: "true"
     AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: s3://airflow-logs
-    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: minio_default
+    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: minio_s3
     AIRFLOW__LOGGING__ENCRYPT_S3_LOGS: "false"
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
     AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    AWS_DEFAULT_REGION: us-east-1
     AWS_ENDPOINT_URL_S3: http://minio:9000
     PYTHONPATH: /opt/airflow
+    PROJECT_ROOT: ${PROJECT_ROOT:-.}
   volumes:
     - ../../orchestration/airflow/dags:/opt/airflow/dags
     - ../../orchestration/airflow/plugins:/opt/airflow/plugins
-    - ../../ingestion:/opt/airflow/ingestion
-    - ../../transformations/dbt:/opt/airflow/dbt
-    - ../../data_quality:/opt/airflow/data_quality
-    - ../../infrastructure/scripts:/opt/airflow/scripts
-    - ../../tests:/opt/airflow/tests
-    - ../../analytics:/opt/airflow/analytics
-    - ../../contracts:/opt/airflow/contracts
-    - ../../replay:/opt/airflow/replay
     - ../../monitoring:/opt/airflow/monitoring
     - airflow-logs:/opt/airflow/logs
   depends_on:
@@ -69,12 +63,12 @@ services:
       - |
         set -e
         echo "Waiting for database to be reachable..."
-        for i in $(seq 1 30); do
+        for i in $$(seq 1 30); do
           if airflow db check 2>/dev/null; then
-            echo "Database reachable after $${i} attempts"
+            echo "Database reachable after $$i attempts"
             break
           fi
-          echo "Attempt $${i}/30 - waiting 2s..."
+          echo "Attempt $$i/30 - waiting 2s..."
           sleep 2
         done
         airflow db migrate
@@ -85,9 +79,9 @@ services:
           --lastname User \
           --role Admin \
           --email admin@example.com || true
-        airflow connections add minio_default \
+        airflow connections add minio_s3 \
           --conn-type aws \
-          --conn-extra '{"endpoint_url": "http://minio:9000", "aws_access_key_id": "minioadmin", "aws_secret_access_key": "minioadmin"}' || true
+          --conn-extra '{"endpoint_url": "http://minio:9000", "aws_access_key_id": "minioadmin", "aws_secret_access_key": "minioadmin", "region_name": "us-east-1"}' || true
     restart: "no"
 
   airflow-api-server:
@@ -125,14 +119,6 @@ services:
     volumes:
       - ../../orchestration/airflow/dags:/opt/airflow/dags
       - ../../orchestration/airflow/plugins:/opt/airflow/plugins
-      - ../../ingestion:/opt/airflow/ingestion
-      - ../../transformations/dbt:/opt/airflow/dbt
-      - ../../data_quality:/opt/airflow/data_quality
-      - ../../infrastructure/scripts:/opt/airflow/scripts
-      - ../../tests:/opt/airflow/tests
-      - ../../analytics:/opt/airflow/analytics
-      - ../../contracts:/opt/airflow/contracts
-      - ../../replay:/opt/airflow/replay
       - ../../monitoring:/opt/airflow/monitoring
       - airflow-logs:/opt/airflow/logs
       - /var/run/docker.sock:/var/run/docker.sock
@@ -140,13 +126,33 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  processing:
+  # --- Processing images (built once, used by DockerOperator) ---
+
+  dlt-runner:
     build:
       context: ../..
-      dockerfile: infrastructure/docker/Dockerfile.processing
-    image: weather-pipeline-processing:latest
+      dockerfile: infrastructure/docker/Dockerfile.dlt
+    image: weather-pipeline-dlt:1.0.0
     profiles:
       - build-only
+
+  dbt-runner:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.dbt
+    image: weather-pipeline-dbt:1.0.0
+    profiles:
+      - build-only
+
+  soda-runner:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.soda
+    image: weather-pipeline-soda:1.0.0
+    profiles:
+      - build-only
+
+  # --- Infrastructure services ---
 
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -180,6 +186,8 @@ services:
       "
     networks:
       - pipeline-network
+
+  # --- Monitoring ---
 
   prometheus:
     image: prom/prometheus:v3.10.0

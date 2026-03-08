@@ -1,4 +1,4 @@
-.PHONY: up up-full down down-full logs psql test status restart clean build
+.PHONY: up up-full down down-full logs psql test status restart clean build build-images
 
 # ============================================================
 # Weather Data Engineering Pipeline - Makefile
@@ -7,16 +7,20 @@
 COMPOSE = docker compose --env-file .env -f infrastructure/docker/docker-compose.yml
 COMPOSE_FULL = $(COMPOSE) -f infrastructure/docker/docker-compose.openmetadata.yml
 
-## Build images without starting
+## Build Airflow image only
 build:
 	$(COMPOSE) build
 
+## Build all processing images (dlt, dbt, soda) used by DockerOperator
+build-images:
+	$(COMPOSE) --profile build-only build
+
 ## Start core services (Airflow, PostgreSQL, MinIO, Prometheus, Grafana)
-up:
+up: build-images
 	$(COMPOSE) up -d --build
 
 ## Start all services including OpenMetadata catalog
-up-full:
+up-full: build-images
 	$(COMPOSE) up -d --build
 	$(COMPOSE_FULL) up -d
 
@@ -37,9 +41,9 @@ logs:
 psql:
 	$(COMPOSE) exec postgres psql -U airflow -d weather_db
 
-## Run unit tests inside the scheduler container
+## Run unit tests locally via uv
 test:
-	$(COMPOSE) exec airflow-scheduler bash -c "PYTHONPATH=/opt/airflow /usr/python/bin/python -m pytest /opt/airflow/tests/ -v --tb=short"
+	uv run --extra dev pytest tests/unit/ -v --tb=short
 
 ## Show service status
 status:
