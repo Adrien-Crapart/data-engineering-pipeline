@@ -2,7 +2,11 @@
 Weather Pipeline DAG - End-to-end orchestration.
 
 Extracts weather data from OpenWeather API using dlt, transforms it
-with dbt, and validates data quality with Soda Core.
+with dbt (in a dedicated Docker container), and validates data quality
+with Soda Core and Elementary.
+
+Processing tasks (dbt, Soda, Elementary) run in isolated Docker containers
+via DockerOperator to separate orchestration from processing.
 
 Schedule: Every 6 hours.
 """
@@ -14,16 +18,15 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
-from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import dag, task
 
 logger = logging.getLogger(__name__)
 
-DBT_DIR = "/opt/airflow/dbt"
-DBT_BIN = "/usr/python/bin/dbt"
-EDR_BIN = "/usr/python/bin/edr"
-SODA_BIN = "/usr/python/bin/soda"
-DATA_QUALITY_DIR = "/opt/airflow/data_quality/soda"
+PROCESSING_IMAGE = "weather-pipeline-processing:latest"
+NETWORK_NAME = "weather-pipeline_pipeline-network"
+DBT_MOUNT = "/app/dbt"
+SODA_MOUNT = "/app/data_quality"
 
 default_args = {
     "owner": "data-engineering",
@@ -35,7 +38,7 @@ default_args = {
 
 @dag(
     dag_id="weather_pipeline",
-    description="End-to-end weather data pipeline: ingest → transform → validate",
+    description="End-to-end weather data pipeline: ingest -> transform -> validate -> observe",
     schedule="0 */6 * * *",
     start_date=datetime(2025, 1, 1),
     catchup=False,
@@ -57,29 +60,133 @@ def weather_pipeline():
         logger.info("Extraction complete: %s", metrics)
         return metrics
 
-    dbt_deps = BashOperator(
+    dbt_deps = DockerOperator(
         task_id="dbt_deps",
-        bash_command=f"cd {DBT_DIR} && {DBT_BIN} deps --profiles-dir .",
+        image=PROCESSING_IMAGE,
+        command="cd /app/dbt && dbt deps --profiles-dir .",
+        network_mode=NETWORK_NAME,
+        mounts=[
+            {
+                "source": "transformations/dbt",
+                "target": DBT_MOUNT,
+                "type": "bind",
+            }
+        ],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
     )
 
-    dbt_run = BashOperator(
+    dbt_run = DockerOperator(
         task_id="dbt_run",
-        bash_command=f"cd {DBT_DIR} && {DBT_BIN} run --profiles-dir .",
+        image=PROCESSING_IMAGE,
+        command="cd /app/dbt && dbt run --profiles-dir .",
+        network_mode=NETWORK_NAME,
+        mounts=[
+            {
+                "source": "transformations/dbt",
+                "target": DBT_MOUNT,
+                "type": "bind",
+            }
+        ],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
     )
 
-    dbt_test = BashOperator(
+    dbt_test = DockerOperator(
         task_id="dbt_test",
-        bash_command=f"cd {DBT_DIR} && {DBT_BIN} test --profiles-dir .",
+        image=PROCESSING_IMAGE,
+        command="cd /app/dbt && dbt test --profiles-dir .",
+        network_mode=NETWORK_NAME,
+        mounts=[
+            {
+                "source": "transformations/dbt",
+                "target": DBT_MOUNT,
+                "type": "bind",
+            }
+        ],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
     )
 
-    soda_scan = BashOperator(
+    soda_scan = DockerOperator(
         task_id="soda_scan",
-        bash_command=(
-            f"{SODA_BIN} scan "
-            f"-d weather_db "
-            f"-c {DATA_QUALITY_DIR}/configuration.yml "
-            f"{DATA_QUALITY_DIR}/checks/"
+        image=PROCESSING_IMAGE,
+        command=(
+            "soda scan "
+            "-d weather_db "
+            "-c /app/data_quality/soda/configuration.yml "
+            "/app/data_quality/soda/checks/"
         ),
+        network_mode=NETWORK_NAME,
+        mounts=[
+            {
+                "source": "data_quality",
+                "target": SODA_MOUNT,
+                "type": "bind",
+            }
+        ],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
+    )
+
+    elementary_report = DockerOperator(
+        task_id="elementary_report",
+        image=PROCESSING_IMAGE,
+        command=(
+            "cd /app/dbt && edr report "
+            "--profiles-dir . "
+            "--file-path /tmp/elementary_report.html"
+        ),
+        network_mode=NETWORK_NAME,
+        mounts=[
+            {
+                "source": "transformations/dbt",
+                "target": DBT_MOUNT,
+                "type": "bind",
+            }
+        ],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
     )
 
     @task()
@@ -97,7 +204,7 @@ def weather_pipeline():
         try:
             _push()
         except Exception:
-            logger.warning("Prometheus push failed – metrics not exported", exc_info=True)
+            logger.warning("Prometheus push failed - metrics not exported", exc_info=True)
 
         logger.info("=" * 60)
         logger.info("PIPELINE RUN COMPLETE")
@@ -105,15 +212,6 @@ def weather_pipeline():
         logger.info("Duration: %ss", duration)
         logger.info("Cities: %s", extraction_metrics.get("cities", []))
         logger.info("=" * 60)
-
-    elementary_report = BashOperator(
-        task_id="elementary_report",
-        bash_command=(
-            f"{EDR_BIN} report "
-            f"--profiles-dir {DBT_DIR} "
-            f"--file-path /opt/airflow/logs/elementary_report.html"
-        ),
-    )
 
     extraction = extract_weather()
     (

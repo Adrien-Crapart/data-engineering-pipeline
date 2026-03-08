@@ -6,6 +6,8 @@ Triggered manually with parameters:
   - date_end: End date (YYYY-MM-DD)
 
 Use cases: fix transformations, update contracts, correct historical errors.
+
+Processing tasks (dbt) run in isolated Docker containers via DockerOperator.
 """
 
 from __future__ import annotations
@@ -15,13 +17,14 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from airflow.models.param import Param
-from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import dag, task
 
 logger = logging.getLogger(__name__)
 
-DBT_DIR = "/opt/airflow/dbt"
-DBT_BIN = "/usr/python/bin/dbt"
+PROCESSING_IMAGE = "weather-pipeline-processing:latest"
+NETWORK_NAME = "weather-pipeline_pipeline-network"
+DBT_MOUNT = "/app/dbt"
 
 default_args = {
     "owner": "data-engineering",
@@ -59,7 +62,11 @@ def replay_pipeline():
     @task()
     def replay_from_datalake(**context) -> dict[str, Any]:
         """Read raw files from MinIO and reload into PostgreSQL."""
-        from replay.reprocess_pipeline import list_raw_files, load_raw_to_postgres, _build_minio_client
+        from replay.reprocess_pipeline import (
+            _build_minio_client,
+            list_raw_files,
+            load_raw_to_postgres,
+        )
 
         params = context["params"]
         date_start = datetime.strptime(params["date_start"], "%Y-%m-%d")
@@ -78,19 +85,58 @@ def replay_pipeline():
         records = load_raw_to_postgres(client, bucket, keys, postgres_dsn)
         return {"files_found": len(keys), "records_loaded": records, "status": "success"}
 
-    dbt_deps = BashOperator(
+    dbt_deps = DockerOperator(
         task_id="dbt_deps",
-        bash_command=f"cd {DBT_DIR} && {DBT_BIN} deps --profiles-dir .",
+        image=PROCESSING_IMAGE,
+        command="cd /app/dbt && dbt deps --profiles-dir .",
+        network_mode=NETWORK_NAME,
+        mounts=[{"source": "transformations/dbt", "target": DBT_MOUNT, "type": "bind"}],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
     )
 
-    dbt_run = BashOperator(
+    dbt_run = DockerOperator(
         task_id="dbt_run",
-        bash_command=f"cd {DBT_DIR} && {DBT_BIN} run --profiles-dir .",
+        image=PROCESSING_IMAGE,
+        command="cd /app/dbt && dbt run --profiles-dir .",
+        network_mode=NETWORK_NAME,
+        mounts=[{"source": "transformations/dbt", "target": DBT_MOUNT, "type": "bind"}],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
     )
 
-    dbt_test = BashOperator(
+    dbt_test = DockerOperator(
         task_id="dbt_test",
-        bash_command=f"cd {DBT_DIR} && {DBT_BIN} test --profiles-dir .",
+        image=PROCESSING_IMAGE,
+        command="cd /app/dbt && dbt test --profiles-dir .",
+        network_mode=NETWORK_NAME,
+        mounts=[{"source": "transformations/dbt", "target": DBT_MOUNT, "type": "bind"}],
+        auto_remove="success",
+        docker_url="unix://var/run/docker.sock",
+        mount_tmp_dir=False,
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "weather_db",
+            "POSTGRES_USER": "airflow",
+            "POSTGRES_PASSWORD": "airflow",
+        },
     )
 
     @task()
