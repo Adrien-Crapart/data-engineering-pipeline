@@ -1,0 +1,74 @@
+# OpenMetadata ingestion configuration for PostgreSQL data source.
+# This config is used by the metadata_ingestion_dag to catalog
+# all tables and lineage from the weather pipeline database.
+
+source:
+  type: Postgres
+  serviceName: weather_pipeline_postgres
+  serviceConnection:
+    config:
+      type: Postgres
+      hostPort: "postgres:5432"
+      username: "${POSTGRES_USER:-airflow}"
+      password: "${POSTGRES_PASSWORD:-airflow}"
+      database: "${POSTGRES_DB:-weather_db}"
+  sourceConfig:
+    config:
+      type: DatabaseMetadata
+      schemaFilterPattern:
+        includes:
+          - raw
+          - staging
+          - mart
+          - elementary
+
+sink:
+  type: metadata-rest
+  config: {}
+
+workflowConfig:
+  openMetadataServerConfig:
+    hostPort: "http://openmetadata-server:8585/api"
+    authProvider: no-auth
+
+---
+# Lineage ingestion
+source:
+  type: Postgres
+  serviceName: weather_pipeline_postgres
+  sourceConfig:
+    config:
+      type: DatabaseLineage
+      queryLogDuration: 7
+
+sink:
+  type: metadata-rest
+  config: {}
+
+workflowConfig:
+  openMetadataServerConfig:
+    hostPort: "http://openmetadata-server:8585/api"
+    authProvider: no-auth
+
+---
+# Profiler ingestion
+source:
+  type: Postgres
+  serviceName: weather_pipeline_postgres
+  sourceConfig:
+    config:
+      type: Profiler
+      schemaFilterPattern:
+        includes:
+          - staging
+          - mart
+      generateSampleData: true
+
+sink:
+  type: metadata-rest
+  config: {}
+
+workflowConfig:
+  openMetadataServerConfig:
+    hostPort: "http://openmetadata-server:8585/api"
+    authProvider: no-auth

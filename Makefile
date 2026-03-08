@@ -1,21 +1,32 @@
-.PHONY: up down logs psql test status restart clean build
+.PHONY: up up-full down down-full logs psql test status restart clean build
 
 # ============================================================
 # Weather Data Engineering Pipeline - Makefile
 # ============================================================
 
 COMPOSE = docker compose --env-file .env -f infrastructure/docker/docker-compose.yml
+COMPOSE_FULL = $(COMPOSE) -f infrastructure/docker/docker-compose.openmetadata.yml
 
 ## Build images without starting
 build:
 	$(COMPOSE) build
 
-## Start all services
+## Start core services (Airflow, PostgreSQL, MinIO, Prometheus, Grafana)
 up:
 	$(COMPOSE) up -d --build
 
-## Stop and remove all services and volumes
+## Start all services including OpenMetadata catalog
+up-full:
+	$(COMPOSE) up -d --build
+	$(COMPOSE_FULL) up -d
+
+## Stop and remove core services and volumes
 down:
+	$(COMPOSE) down -v
+
+## Stop and remove all services including OpenMetadata
+down-full:
+	$(COMPOSE_FULL) down -v
 	$(COMPOSE) down -v
 
 ## Follow service logs
@@ -40,4 +51,5 @@ restart:
 
 ## Remove all containers, volumes, and built images
 clean:
+	$(COMPOSE_FULL) down -v --rmi local 2>/dev/null || true
 	$(COMPOSE) down -v --rmi local
