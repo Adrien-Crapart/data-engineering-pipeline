@@ -19,6 +19,11 @@ class PipelineConfig:
     postgres_db: str = "weather_db"
     postgres_user: str = "airflow"
     postgres_password: str = "airflow"
+    minio_endpoint: str = "minio:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_bucket: str = "weather-data-lake"
+    minio_secure: bool = False
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -35,6 +40,9 @@ class PipelineConfig:
         if not cities:
             raise ValueError("WEATHER_CITIES must contain at least one city name.")
 
+        minio_endpoint_raw = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
+        minio_endpoint = minio_endpoint_raw.replace("http://", "").replace("https://", "")
+
         return cls(
             api_key=api_key,
             cities=cities,
@@ -43,6 +51,11 @@ class PipelineConfig:
             postgres_db=os.getenv("POSTGRES_DB", "weather_db"),
             postgres_user=os.getenv("POSTGRES_USER", "airflow"),
             postgres_password=os.getenv("POSTGRES_PASSWORD", "airflow"),
+            minio_endpoint=minio_endpoint,
+            minio_access_key=os.getenv("MINIO_ROOT_USER", "minioadmin"),
+            minio_secret_key=os.getenv("MINIO_ROOT_PASSWORD", "minioadmin"),
+            minio_bucket=os.getenv("MINIO_BUCKET_NAME", "weather-data-lake"),
+            minio_secure=minio_endpoint_raw.startswith("https://"),
         )
 
     @property

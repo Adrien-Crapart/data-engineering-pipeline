@@ -2,8 +2,8 @@
 OpenWeather ingestion pipeline using dlt (Data Load Tool).
 
 Extracts current weather and 5-day forecast data from the OpenWeather API
-for a configurable list of cities, then loads it into the `raw` schema
-of a PostgreSQL database.
+for a configurable list of cities, stores raw JSON in MinIO (data lake),
+then loads structured data into the ``raw`` schema of PostgreSQL.
 """
 
 from __future__ import annotations
@@ -24,6 +24,17 @@ MAX_RETRIES = 3
 RETRY_BACKOFF = 2
 
 
+def _get_datalake_client(config: PipelineConfig):
+    """Lazy-init the MinIO data lake client (returns None when unavailable)."""
+    try:
+        from ingestion.storage.minio_client import DataLakeClient
+
+        return DataLakeClient(config)
+    except Exception:
+        logger.warning("MinIO data lake unavailable – raw archiving disabled")
+        return None
+
+
 def _fetch_with_retry(url: str, params: dict, retries: int = MAX_RETRIES) -> dict[str, Any]:
     """GET request with exponential backoff retry."""
     for attempt in range(1, retries + 1):
@@ -36,7 +47,9 @@ def _fetch_with_retry(url: str, params: dict, retries: int = MAX_RETRIES) -> dic
                 logger.error("Request failed after %d attempts: %s", retries, exc)
                 raise
             wait = RETRY_BACKOFF ** attempt
-            logger.warning("Attempt %d/%d failed, retrying in %ds: %s", attempt, retries, wait, exc)
+            logger.warning(
+                "Attempt %d/%d failed, retrying in %ds: %s", attempt, retries, wait, exc
+            )
             time.sleep(wait)
     return {}
 
@@ -44,6 +57,7 @@ def _fetch_with_retry(url: str, params: dict, retries: int = MAX_RETRIES) -> dic
 @dlt.source(name="openweather")
 def openweather_source(config: PipelineConfig):
     """Extract weather data from OpenWeather API for configured cities."""
+    lake = _get_datalake_client(config)
 
     @dlt.resource(write_disposition="append", table_name="weather_current")
     def current_weather() -> Iterator[dict[str, Any]]:
@@ -56,6 +70,10 @@ def openweather_source(config: PipelineConfig):
                     params={"q": city, "appid": config.api_key, "units": config.units},
                 )
                 elapsed = time.time() - start
+
+                if lake:
+                    lake.store_raw(data, source="weather_current", city=city)
+
                 data["_extraction_city"] = city
                 data["_extraction_timestamp"] = time.time()
                 logger.info("Extracted current weather for %s in %.2fs", city, elapsed)
@@ -75,6 +93,10 @@ def openweather_source(config: PipelineConfig):
                     params={"q": city, "appid": config.api_key, "units": config.units},
                 )
                 elapsed = time.time() - start
+
+                if lake:
+                    lake.store_raw(data, source="weather_forecast", city=city)
+
                 data["_extraction_city"] = city
                 data["_extraction_timestamp"] = time.time()
                 logger.info("Extracted forecast for %s in %.2fs", city, elapsed)
@@ -87,8 +109,7 @@ def openweather_source(config: PipelineConfig):
 
 
 def run_pipeline(config: PipelineConfig | None = None) -> dict[str, Any]:
-    """
-    Run the full ingestion pipeline.
+    """Run the full ingestion pipeline.
 
     Returns a dict of load metrics (duration, status, etc.).
     """
@@ -117,7 +138,9 @@ def run_pipeline(config: PipelineConfig | None = None) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
     from dotenv import load_dotenv
 
     load_dotenv()
