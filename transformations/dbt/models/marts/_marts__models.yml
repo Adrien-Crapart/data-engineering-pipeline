@@ -5,6 +5,12 @@ models:
     description: >
       Daily weather summary per city. Aggregates current observations
       and forecast data into min/max/avg metrics for each day.
+    config:
+      tags: ["mart", "weather"]
+    tests:
+      - elementary.volume_anomalies:
+          timestamp_column: date_day
+      - elementary.schema_changes
     columns:
       - name: city_name
         description: City name.
@@ -27,6 +33,10 @@ models:
     description: >
       Aggregated weather metrics per city across all available data.
       Useful for city comparison dashboards.
+    config:
+      tags: ["mart", "weather"]
+    tests:
+      - elementary.schema_changes
     columns:
       - name: city_name
         description: City name.

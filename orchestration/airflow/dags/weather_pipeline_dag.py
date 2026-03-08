@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DBT_DIR = "/opt/airflow/dbt"
 DBT_BIN = "/usr/python/bin/dbt"
+EDR_BIN = "/usr/python/bin/edr"
 SODA_BIN = "/usr/python/bin/soda"
 DATA_QUALITY_DIR = "/opt/airflow/data_quality/soda"
 
@@ -105,8 +106,25 @@ def weather_pipeline():
         logger.info("Cities: %s", extraction_metrics.get("cities", []))
         logger.info("=" * 60)
 
+    elementary_report = BashOperator(
+        task_id="elementary_report",
+        bash_command=(
+            f"{EDR_BIN} report "
+            f"--profiles-dir {DBT_DIR} "
+            f"--file-path /opt/airflow/logs/elementary_report.html"
+        ),
+    )
+
     extraction = extract_weather()
-    extraction >> dbt_deps >> dbt_run >> dbt_test >> soda_scan >> push_metrics(extraction)
+    (
+        extraction
+        >> dbt_deps
+        >> dbt_run
+        >> dbt_test
+        >> soda_scan
+        >> elementary_report
+        >> push_metrics(extraction)
+    )
 
 
 weather_pipeline()

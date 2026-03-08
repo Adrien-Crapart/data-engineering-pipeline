@@ -5,6 +5,13 @@ models:
     description: >
       Cleaned current weather observations with properly named columns
       and typed values. One row per city per extraction.
+    config:
+      tags: ["staging", "weather"]
+    tests:
+      - elementary.volume_anomalies:
+          timestamp_column: measured_at
+          where: "measured_at >= current_date - interval '7 days'"
+      - elementary.schema_changes
     columns:
       - name: city_name
         description: City name returned by the API.
@@ -35,6 +42,13 @@ models:
     description: >
       Cleaned and unnested forecast entries. One row per city per
       3-hour forecast slot.
+    config:
+      tags: ["staging", "weather"]
+    tests:
+      - elementary.volume_anomalies:
+          timestamp_column: forecast_at
+          where: "forecast_at >= current_date - interval '7 days'"
+      - elementary.schema_changes
     columns:
       - name: city_name
         description: City name from the forecast response.
