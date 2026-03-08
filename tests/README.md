@@ -16,11 +16,11 @@ tests/
 │   ├── test_pipeline.py            — OpenWeather ingestion pipeline
 │   ├── test_duckdb_analytics.py    — DuckDB analytics engine
 │   ├── test_great_expectations.py  — Great Expectations suites
-│   ├── test_contracts.py           — Contract validator
-│   ├── test_minio_client.py        — MinIO DataLakeClient
-│   ├── test_metrics_exporter.py    — Prometheus metrics exporter
-│   ├── test_replay.py              — Replay pipeline
-│   └── test_dags.py                — Airflow DAG parsing validation
+│   ├── test_contracts.py           — Contract validator (17 tests)
+│   ├── test_minio_client.py        — MinIO DataLakeClient (6 tests)
+│   ├── test_metrics_exporter.py    — Prometheus metrics exporter (7 tests)
+│   ├── test_replay.py              — Replay pipeline (6 tests)
+│   └── test_dags.py                — DAG parsing, conventions, DockerOperator validation (9 tests)
 └── integration/
     └── (reserved for end-to-end tests with running services)
 ```

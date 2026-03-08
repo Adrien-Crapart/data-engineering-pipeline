@@ -92,8 +92,8 @@ data-engineering-pipeline/
 ├── ingestion/           — dlt pipelines, config, MinIO storage client
 ├── metadata/            — OpenMetadata ingestion configuration
 ├── monitoring/          — Prometheus config, Grafana dashboards, metrics exporter
-├── orchestration/       — Airflow DAGs (weather, replay, metadata)
-├── replay/              — Historical data replay from MinIO data lake
+├── orchestration/       — Airflow DAG (single weather_pipeline)
+├── replay/              — Historical data replay module (used via Airflow Clear)
 ├── scripts/             — Utility shell scripts (setup, manual runs)
 ├── tests/               — Unit and integration tests (86+ tests)
 └── transformations/     — dbt models (staging, marts), tests, Elementary
@@ -107,22 +107,25 @@ Each folder contains a `README.md` with detailed documentation.
 extract_weather → dbt_deps → dbt_run → dbt_test → soda_scan → elementary_report → push_metrics
 ```
 
-- **extract_weather**: dlt ingestion → validate contracts → archive to MinIO → load to PostgreSQL
-- **dbt_***: Run in isolated Docker container via `DockerOperator`
-- **soda_scan**: Run in isolated Docker container via `DockerOperator`
-- **elementary_report**: Run in isolated Docker container via `DockerOperator`
-- **push_metrics**: Push Prometheus metrics to Pushgateway
+- **extract_weather**: `weather-pipeline-dlt:1.0.0` — dlt ingestion + contract validation + MinIO archive
+- **dbt_deps/run/test**: `weather-pipeline-dbt:1.0.0` — dbt transformations + Elementary
+- **soda_scan**: `weather-pipeline-soda:1.0.0` — Soda Core quality checks
+- **elementary_report**: `weather-pipeline-dbt:1.0.0` — Elementary observability report
+- **push_metrics**: Airflow TaskFlow — lightweight HTTP push to Prometheus
+
+Re-run from any task via the Airflow UI **Clear** functionality.
 
 ## Key Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| DockerOperator for processing | Airflow orchestrates only; dbt/Soda run in isolated containers |
+| One Dockerfile per tool | Decoupled dependencies and independent resource allocation |
+| Slim Airflow image | Providers only — Airflow orchestrates, never processes |
+| DockerOperator for all processing | Isolation, reproducibility, resource control |
+| Official OpenMetadata ingestion | Separate embedded Airflow, maintained upstream |
+| No replay DAG | Airflow Clear = re-run from any task natively |
 | Pinned Docker image versions | Reproducible builds, no surprise breakages |
 | MinIO as raw data lake | Immutable, replayable, auditable raw data archive |
-| Data contracts before storage | Schema governance catches issues at ingestion time |
-| Separate OpenMetadata compose | Lightweight core stack; catalog is optional for dev |
-| Elementary for dbt observability | Volume anomalies, schema changes, freshness monitoring |
 
 ## Data Layers
 
@@ -150,10 +153,11 @@ make up          # Start core services (Airflow, PostgreSQL, MinIO, Prometheus, 
 make up-full     # Start all services including OpenMetadata
 make down        # Stop core services
 make down-full   # Stop all services including OpenMetadata
-make build       # Build Docker images
+make build       # Build Airflow image
+make build-images # Build all processing images (dlt, dbt, soda)
 make logs        # Follow service logs
 make psql        # Open PostgreSQL shell
-make test        # Run unit tests in Docker
+make test        # Run unit tests locally via uv
 make status      # Show service status
 make clean       # Full cleanup (containers + images + volumes)
 ```

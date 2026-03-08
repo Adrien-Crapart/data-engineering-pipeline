@@ -5,49 +5,11 @@ Ensures all DAGs can be parsed without import errors and follow conventions.
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 DAGS_DIR = Path(__file__).resolve().parents[2] / "orchestration" / "airflow" / "dags"
-
-
-def _mock_airflow_imports():
-    """Create mock modules for Airflow imports so DAGs can be parsed outside Airflow."""
-    mock_modules = {}
-
-    for mod_name in [
-        "airflow",
-        "airflow.sdk",
-        "airflow.models",
-        "airflow.models.param",
-        "airflow.providers",
-        "airflow.providers.standard",
-        "airflow.providers.standard.operators",
-        "airflow.providers.standard.operators.bash",
-        "airflow.providers.docker",
-        "airflow.providers.docker.operators",
-        "airflow.providers.docker.operators.docker",
-    ]:
-        if mod_name not in sys.modules:
-            mock = MagicMock()
-            sys.modules[mod_name] = mock
-            mock_modules[mod_name] = mock
-
-    dag_decorator = MagicMock()
-    dag_decorator.side_effect = lambda *a, **kw: lambda fn: fn
-    sys.modules["airflow.sdk"].dag = dag_decorator
-
-    task_decorator = MagicMock()
-    task_decorator.side_effect = lambda *a, **kw: lambda fn: fn
-    sys.modules["airflow.sdk"].task = task_decorator
-
-    sys.modules["airflow.models.param"].Param = MagicMock
-
-    return mock_modules
 
 
 class TestDagFilesExist:
@@ -57,15 +19,17 @@ class TestDagFilesExist:
     def test_weather_pipeline_dag_exists(self):
         assert (DAGS_DIR / "weather_pipeline_dag.py").exists()
 
-    def test_replay_dag_exists(self):
-        assert (DAGS_DIR / "replay_dag.py").exists()
+    def test_no_replay_dag(self):
+        assert not (DAGS_DIR / "replay_dag.py").exists(), "replay_dag.py should not exist"
 
-    def test_metadata_ingestion_dag_exists(self):
-        assert (DAGS_DIR / "metadata_ingestion_dag.py").exists()
+    def test_no_metadata_ingestion_dag(self):
+        assert not (DAGS_DIR / "metadata_ingestion_dag.py").exists(), (
+            "metadata_ingestion_dag.py should not exist"
+        )
 
 
 class TestDagParsing:
-    """Verify DAG files are syntactically valid Python and can be imported."""
+    """Verify DAG files are syntactically valid Python and follow conventions."""
 
     def test_dag_files_are_valid_python(self):
         for dag_file in DAGS_DIR.glob("*.py"):
@@ -84,3 +48,19 @@ class TestDagParsing:
             assert '"""' in content or "'''" in content, (
                 f"{dag_file.name} is missing a module-level docstring"
             )
+
+    def test_weather_pipeline_uses_docker_operator(self):
+        content = (DAGS_DIR / "weather_pipeline_dag.py").read_text(encoding="utf-8")
+        assert "DockerOperator" in content, "weather_pipeline must use DockerOperator"
+        assert "BashOperator" not in content, "weather_pipeline must not use BashOperator"
+
+    def test_weather_pipeline_has_separate_images(self):
+        content = (DAGS_DIR / "weather_pipeline_dag.py").read_text(encoding="utf-8")
+        assert "weather-pipeline-dlt" in content
+        assert "weather-pipeline-dbt" in content
+        assert "weather-pipeline-soda" in content
+
+    def test_weather_pipeline_uses_mount_objects(self):
+        content = (DAGS_DIR / "weather_pipeline_dag.py").read_text(encoding="utf-8")
+        assert "from docker.types import Mount" in content
+        assert "Mount(" in content
