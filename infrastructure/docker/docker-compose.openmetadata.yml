@@ -42,7 +42,7 @@ services:
       - pipeline-network
 
   openmetadata-server:
-    image: openmetadata/server:latest
+    image: openmetadata/server:1.12.1
     environment:
       OPENMETADATA_CLUSTER_NAME: weather-platform
       SERVER_HOST_API_URL: http://openmetadata-server:8585/api
