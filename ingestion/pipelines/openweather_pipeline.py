@@ -15,6 +15,7 @@ from typing import Any, Iterator
 import dlt
 import requests
 
+from contracts.validator import validate_contract
 from ingestion.config import PipelineConfig
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,16 @@ logger = logging.getLogger(__name__)
 REQUESTS_TIMEOUT = 30
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
+
+
+def _validate(data: dict, contract_name: str) -> None:
+    """Validate data against its contract, log warnings on violations."""
+    try:
+        errors = validate_contract(data, contract_name)
+        if errors:
+            logger.warning("Contract violations for %s: %s", contract_name, errors)
+    except FileNotFoundError:
+        logger.debug("No contract found for %s – skipping validation", contract_name)
 
 
 def _get_datalake_client(config: PipelineConfig):
@@ -71,6 +82,8 @@ def openweather_source(config: PipelineConfig):
                 )
                 elapsed = time.time() - start
 
+                _validate(data, "weather_current")
+
                 if lake:
                     lake.store_raw(data, source="weather_current", city=city)
 
@@ -93,6 +106,8 @@ def openweather_source(config: PipelineConfig):
                     params={"q": city, "appid": config.api_key, "units": config.units},
                 )
                 elapsed = time.time() - start
+
+                _validate(data, "weather_forecast")
 
                 if lake:
                     lake.store_raw(data, source="weather_forecast", city=city)

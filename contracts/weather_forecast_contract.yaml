@@ -1,0 +1,30 @@
+contract:
+  name: weather_forecast
+  version: "1.0"
+  owner: data-engineering
+  description: >
+    Schema contract for OpenWeather 5-day/3-hour forecast API responses.
+    Validated before raw storage and warehouse loading.
+  freshness:
+    max_age_minutes: 360
+
+  schema:
+    fields:
+      - name: list
+        type: array
+        required: true
+
+      - name: city
+        type: object
+        required: true
+        fields:
+          - name: name
+            type: string
+            required: true
+          - name: coord
+            type: object
+            required: true
+
+      - name: cnt
+        type: integer
+        required: true

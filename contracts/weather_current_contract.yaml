@@ -1,0 +1,72 @@
+contract:
+  name: weather_current
+  version: "1.0"
+  owner: data-engineering
+  description: >
+    Schema contract for OpenWeather current weather API responses.
+    Validated before raw storage and warehouse loading.
+  freshness:
+    max_age_minutes: 360
+
+  schema:
+    fields:
+      - name: main
+        type: object
+        required: true
+        fields:
+          - name: temp
+            type: number
+            required: true
+          - name: feels_like
+            type: number
+            required: false
+          - name: humidity
+            type: integer
+            required: true
+          - name: pressure
+            type: integer
+            required: true
+          - name: temp_min
+            type: number
+            required: false
+          - name: temp_max
+            type: number
+            required: false
+
+      - name: wind
+        type: object
+        required: true
+        fields:
+          - name: speed
+            type: number
+            required: true
+          - name: deg
+            type: integer
+            required: false
+
+      - name: weather
+        type: array
+        required: true
+
+      - name: name
+        type: string
+        required: true
+
+      - name: dt
+        type: integer
+        required: true
+
+      - name: coord
+        type: object
+        required: true
+        fields:
+          - name: lon
+            type: number
+            required: true
+          - name: lat
+            type: number
+            required: true
+
+      - name: sys
+        type: object
+        required: false

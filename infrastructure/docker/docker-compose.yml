@@ -22,6 +22,7 @@ x-airflow-common: &airflow-common
     - ../../infrastructure/scripts:/opt/airflow/scripts
     - ../../tests:/opt/airflow/tests
     - ../../analytics:/opt/airflow/analytics
+    - ../../contracts:/opt/airflow/contracts
     - airflow-logs:/opt/airflow/logs
   depends_on:
     postgres:
