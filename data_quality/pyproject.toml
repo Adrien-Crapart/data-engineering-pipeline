@@ -1,0 +1,9 @@
+[project]
+name = "weather-pipeline-data-quality"
+version = "1.0.0"
+description = "Data quality dependencies for the weather data pipeline (Soda Core)"
+requires-python = ">=3.12"
+
+dependencies = [
+    "soda-core-postgres>=3.3.0",
+]
