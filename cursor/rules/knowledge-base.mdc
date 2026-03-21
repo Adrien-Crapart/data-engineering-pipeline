@@ -1,0 +1,176 @@
+---
+description: Cumulative knowledge base of data pipeline best practices, lessons learned, and architectural decisions. This rule MUST be updated iteratively after each debugging session, bug fix, or architectural change.
+alwaysApply: true
+---
+
+# Data Pipeline Knowledge Base
+
+Accumulated best practices and lessons learned from building and debugging this weather data platform.
+**This document is a living knowledge base — update it every time a new pattern, pitfall, or fix is discovered.**
+
+## Architecture Decisions
+
+### DuckDB + PostgreSQL via ATTACH (not plugins)
+- dbt-duckdb's `plugins` config for postgres **lacks a `store()` method** — tables end up in `:memory:` not in PostgreSQL.
+- Always use `attach:` in `profiles.yml` with `+database: pg` in `dbt_project.yml` to route models to the attached PostgreSQL database.
+
+### S3 Raw Layer (Parquet) + PostgreSQL Staging
+- Raw data lives as versioned Parquet on MinIO S3 (`s3://weather-data-lake/raw/{table}/`).
+- Staging, core, mart, analytic schemas live in PostgreSQL (`weather_db` database).
+- DLT metadata tables (`_dlt_loads`, `_dlt_pipeline_state`) go to the filesystem destination.
+
+### Lakehouse Pattern
+- API -> Parquet on MinIO (raw/immutable) -> DuckDB in dbt reads S3 -> PostgreSQL as serving layer.
+- This is documented in `docs/lakehouse.md` and ADR-002.
+
+## Airflow DAG Patterns
+
+### Parse-Time Performance
+- **NEVER** use `Variable.get()` at module/DAG top level — it causes network calls per DAG parse, leading to `DagBag import timeout`.
+- Use `os.environ.get()` with sensible defaults for all parse-time configuration.
+- `Variable.get()` is fine **inside** `@task`-decorated functions (called at runtime, not parse time).
+
+### Deprecated Email Fields (Airflow 3.x)
+- Do NOT set `email`, `email_on_failure`, `email_on_retry` in `default_args` — deprecated in Airflow 3, removed in 4.
+- Use `on_failure_callback` with `SmtpNotifier` if notifications are needed.
+
+### DockerOperator Best Practices
+- Always set `mem_limit` via env vars (`DLT_MEM_LIMIT`, `DBT_MEM_LIMIT`, `SODA_MEM_LIMIT`).
+- Use `auto_remove="success"` to clean up succeeded containers.
+- Set `mount_tmp_dir=False` to avoid host path leaks.
+- Pass `pool` constraints to limit concurrent DB connections.
+- The network must match the compose project network.
+
+## Docker Entrypoint Patterns
+
+### Environment Variable Consistency
+- Airflow DockerOperator passes environment variables to containers.
+- Entrypoint health checks MUST resolve variables with fallback chains.
+- **NEVER** use `curl` to health-check PostgreSQL — PG speaks a binary protocol, not HTTP.
+- Keep `connect_timeout` low (2s) and `sleep` between retries short (1s).
+
+### Image Rebuild After Content Changes
+- Changes to entrypoint scripts, Python code, or any file COPYed in a Dockerfile require a `docker build` to take effect.
+- The Airflow DockerOperator uses the **local Docker image** (by tag).
+- Checklist after script changes: rebuild with `make build-dlt`, `make build-dbt`, or `make build-soda`.
+
+## dbt Patterns
+
+### Column Aliasing in DuckDB
+- DuckDB's binder resolves aliases in the same SELECT — `trim(col) as col` creates ambiguity.
+- If a column doesn't exist in the source Parquet, DuckDB may report a misleading "binder error".
+- Always verify actual Parquet schemas before assuming column names.
+
+### Materialization Strategy
+- `staging`: always `view` or `table` depending on whether referencing `read_parquet()`.
+- `core` / `mart` / `analytic`: `table` (materialized in PostgreSQL via `+database: pg`).
+
+### Schema Routing
+- Use `+database: pg` and `+schema: staging` in `dbt_project.yml` to route models precisely.
+- Never use `meta: {'plugin': 'postgres'}` — it doesn't work with the attach approach.
+
+## Great Expectations Patterns
+
+### schema_name Deprecation
+- Do NOT pass `schema_name=` to `add_table_asset()` — deprecated in GX 1.x.
+- Instead, set the schema via the PostgreSQL connection string: `?options=-csearch_path%3D{schema}`.
+
+### Noisy GX Internal Logs
+- Set the **root** `great_expectations` logger to WARNING.
+- Suppress tqdm progress bars: `os.environ["TQDM_DISABLE"] = "1"`.
+- Suppress SAWarning "Did not recognize type": `warnings.filterwarnings("ignore", message="Did not recognize type")`.
+
+## Dependency Management
+
+### uv + pyproject.toml (mandatory for all Dockerfiles)
+- **ALL** Dockerfiles MUST use `uv` and `pyproject.toml` for dependency management.
+- **NEVER** use `pip install` directly in a Dockerfile — always declare dependencies in `pyproject.toml`.
+- Pattern:
+  ```dockerfile
+  COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+  ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_DEV=1
+  WORKDIR /app
+  COPY pyproject.toml .
+  RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-project
+  ```
+
+### Centralized Linter/Formatter Configuration
+- All linter/formatter config (ruff, mypy, pytest) MUST live in the **root** `pyproject.toml`.
+- Sub-project `pyproject.toml` files contain **dependencies only**.
+- **NEVER** duplicate ruff/mypy sections in sub-project `pyproject.toml`.
+
+## uv Docker Best Practices
+
+### Image Pattern: `COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/`
+- **ALWAYS** use the distroless COPY pattern instead of `curl | sh` for installing uv.
+- Pin to a specific version in production: `ghcr.io/astral-sh/uv:0.10.9`.
+
+### Environment Variables for Docker
+```dockerfile
+ENV UV_COMPILE_BYTECODE=1    # Faster startup in production
+ENV UV_LINK_MODE=copy        # Required: Docker cross-filesystem compatibility
+ENV UV_NO_DEV=1              # Exclude dev dependencies in production images
+```
+
+### Multi-Stage Build Pattern
+```dockerfile
+# Stage 1: Builder
+FROM python:3.12-slim-bookworm AS builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_DEV=1
+WORKDIR /app
+
+# Install deps first (cached layer)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project
+
+# Then install project
+COPY . /app
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen
+
+# Stage 2: Runtime (no build tools)
+FROM python:3.12-slim-bookworm
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+```
+
+### Key Principles
+- **Intermediate layers**: Copy `pyproject.toml` before app code -> dependency layer is cached.
+- **Cache mounts**: `--mount=type=cache,target=/root/.cache/uv` for faster rebuilds.
+- **`--frozen`**: Use locked versions from `uv.lock` (reproducible builds).
+- **No `uv lock` in Docker**: Lock file should be committed to git and copied into the image.
+- **slim-bookworm** base: Use Debian Bookworm for better compatibility.
+
+### Makefile Standards (Cross-Platform)
+- **SHELL := /bin/bash** at the top for consistent behavior.
+- **Never** use `>NUL` (Windows CMD) — always `>/dev/null 2>&1`.
+- **Never** use `echo.` (Windows CMD) — always `@echo ""`.
+- **Never** use `timeout /t` — always `sleep`.
+- make uses sh/bash even on Windows (via MSYS2/Git Bash).
+- Use `|| true` instead of `|| echo.` for error suppression.
+
+## Common Pitfalls
+
+| Symptom | Root Cause | Fix |
+|---------|-----------|-----|
+| `DagBag import timeout` | `Variable.get()` at parse time | Replace with `os.environ.get()` |
+| `StatusCode: 137` | OOM kill in Docker | Increase `mem_limit` |
+| Table created but not in PG | dbt writing to `:memory:` | Use `attach` + `+database: pg` |
+| `schema_name deprecated` | GX API change | Pass schema in connection string |
+| `FileNotFoundError` in container | Image not rebuilt after host changes | Rebuild the Docker image |
+| `Binder Error` in DuckDB | Column doesn't exist or alias ambiguity | Verify Parquet schema first |
+| Email deprecation warnings | Airflow 3.x API change | Remove email fields from `default_args` |
+| `pip install` in Dockerfile | Legacy pattern, not consistent with uv | Use `pyproject.toml` + `uv sync` |
+| Large Docker images (>1GB) | No multi-stage build | Use multi-stage: builder + slim runtime |
+| Slow Docker builds | No cache mounts | Use `--mount=type=cache,target=/root/.cache/uv` |
+| `make` fails with `>NUL` error | Windows CMD syntax in Makefile | Replace with `>/dev/null 2>&1` |
+| Script changes not applied | Docker image not rebuilt | Run `make build-<service>` after changes |
+
+## Update Protocol
+
+**After every debugging session or fix, add the lesson here.** Include:
+1. The symptom observed
+2. The root cause identified
+3. The fix applied
+4. An entry in the Common Pitfalls table if applicable
