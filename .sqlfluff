@@ -1,0 +1,27 @@
+[sqlfluff]
+templater = dbt
+dialect = duckdb
+exclude_rules = LT05,AM04
+max_line_length = 120
+
+[sqlfluff:templater:dbt]
+project_dir = ./transformations/dbt
+profiles_dir = ./transformations/dbt
+profile = weather_pipeline
+
+[sqlfluff:indentation]
+indent_unit = space
+tab_space_size = 4
+indented_joins = false
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.literals]
+capitalisation_policy = lower
