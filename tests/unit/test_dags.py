@@ -12,6 +12,7 @@ import pytest
 DAGS_DIR = Path(__file__).resolve().parents[2] / "orchestration" / "airflow" / "dags"
 
 
+@pytest.mark.unit
 class TestDagFilesExist:
     def test_dags_directory_exists(self):
         assert DAGS_DIR.exists(), f"DAGs directory not found: {DAGS_DIR}"
@@ -28,6 +29,7 @@ class TestDagFilesExist:
         )
 
 
+@pytest.mark.unit
 class TestDagParsing:
     """Verify DAG files are syntactically valid Python and follow conventions."""
 
