@@ -1,0 +1,11 @@
+[project]
+name = "weather-pipeline-dbt"
+version = "1.0.0"
+description = "dbt transformation layer for the weather data pipeline (DuckDB + PostgreSQL)"
+requires-python = ">=3.12"
+
+dependencies = [
+    "dbt-duckdb>=1.9.0",
+    "duckdb>=1.0.0",
+    "elementary-data[duckdb]",
+]
