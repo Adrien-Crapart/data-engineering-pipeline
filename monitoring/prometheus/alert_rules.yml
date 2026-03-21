@@ -1,0 +1,58 @@
+groups:
+  - name: pipeline_alerts
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL has been unreachable for more than 1 minute."
+
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is above 90% for 5 minutes."
+
+      - alert: HighDiskUsage
+        expr: (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk usage above 85%"
+          description: "Root filesystem is {{ $value | humanizePercentage }} full."
+
+      - alert: ContainerOOMKill
+        expr: increase(container_oom_events_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container OOM kill detected"
+          description: "Container {{ $labels.name }} was killed due to OOM."
+
+  - name: pipeline_sla
+    rules:
+      - alert: PipelineDataStale
+        expr: time() - push_time_seconds{job="pushgateway"} > 86400
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline data may be stale"
+          description: "No metrics pushed to Pushgateway in the last 24 hours."
+
+      - alert: PushgatewayDown
+        expr: up{job="pushgateway"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pushgateway is down"
+          description: "Pushgateway has been unreachable for more than 2 minutes."
