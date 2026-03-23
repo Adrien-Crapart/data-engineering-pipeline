@@ -1,24 +1,24 @@
 services:
   dlt-runner:
     build:
-      context: ../..
-      dockerfile: infrastructure/docker/Dockerfile.dlt
+      context: ../../ingestion
+      dockerfile: Dockerfile
     image: weather-pipeline-dlt:1.0.0
     profiles:
       - build-only
 
   dbt-runner:
     build:
-      context: ../..
-      dockerfile: infrastructure/docker/Dockerfile.dbt
+      context: ../../transformations
+      dockerfile: Dockerfile
     image: weather-pipeline-dbt:1.0.0
     profiles:
       - build-only
 
   soda-runner:
     build:
-      context: ../..
-      dockerfile: infrastructure/docker/Dockerfile.soda
+      context: ../../data_quality
+      dockerfile: Dockerfile
     image: weather-pipeline-soda:1.0.0
     profiles:
       - build-only

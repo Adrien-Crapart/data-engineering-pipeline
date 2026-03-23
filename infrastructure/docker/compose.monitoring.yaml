@@ -1,3 +1,5 @@
+name: data-engineering-pipeline
+
 services:
   prometheus:
     image: prom/prometheus:v3.10.0
@@ -22,8 +24,6 @@ services:
           cpus: "0.25"
         reservations:
           memory: 128M
-    networks:
-      - pipeline-network
 
   prometheus-pushgateway:
     image: prom/pushgateway:v1.11.2
@@ -41,8 +41,6 @@ services:
           cpus: "0.25"
         reservations:
           memory: 64M
-    networks:
-      - pipeline-network
 
   alertmanager:
     image: prom/alertmanager:v0.28.1
@@ -65,8 +63,6 @@ services:
           cpus: "0.25"
         reservations:
           memory: 64M
-    networks:
-      - pipeline-network
 
   node-exporter:
     image: prom/node-exporter:v1.9.1
@@ -91,8 +87,6 @@ services:
           cpus: "0.25"
         reservations:
           memory: 64M
-    networks:
-      - pipeline-network
 
   grafana:
     image: grafana/grafana:12.4.0
@@ -119,14 +113,7 @@ services:
           memory: 128M
     depends_on:
       - prometheus
-    networks:
-      - pipeline-network
 
 volumes:
   prometheus-data:
   grafana-data:
-
-networks:
-  pipeline-network:
-    external: true
-    name: ${COMPOSE_PROJECT_NAME:-data-engineering-pipeline}_pipeline-network
