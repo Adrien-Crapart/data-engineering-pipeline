@@ -1,13 +1,19 @@
 name: data-engineering-pipeline
 
+networks:
+  pipeline-network:
+    driver: bridge
+
 services:
   prometheus:
     image: prom/prometheus:v3.10.0
+    networks:
+      - pipeline-network
     ports:
       - "9090:9090"
     volumes:
-      - ../../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ../../monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -27,6 +33,8 @@ services:
 
   prometheus-pushgateway:
     image: prom/pushgateway:v1.11.2
+    networks:
+      - pipeline-network
     ports:
       - "9091:9091"
     healthcheck:
@@ -44,10 +52,12 @@ services:
 
   alertmanager:
     image: prom/alertmanager:v0.28.1
+    networks:
+      - pipeline-network
     ports:
       - "9093:9093"
     volumes:
-      - ../../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
@@ -66,6 +76,8 @@ services:
 
   node-exporter:
     image: prom/node-exporter:v1.9.1
+    networks:
+      - pipeline-network
     ports:
       - "9100:9100"
     volumes:
@@ -90,14 +102,16 @@ services:
 
   grafana:
     image: grafana/grafana:12.4.0
+    networks:
+      - pipeline-network
     ports:
       - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
-      - ../../monitoring/grafana/provisioning:/etc/grafana/provisioning
-      - ../../monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
       - grafana-data:/var/lib/grafana
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]

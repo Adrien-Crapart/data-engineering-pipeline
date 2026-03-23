@@ -1,4 +1,4 @@
-"""MinIO client for storing raw API responses in the S3-compatible data lake."""
+"""MinIO client for storing raw API responses as Parquet in the S3-compatible data lake."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 from minio import Minio
 from minio.error import S3Error
 
@@ -16,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class DataLakeClient:
-    """Writes immutable raw JSON objects to MinIO following a partitioned layout.
+    """Writes immutable raw data as Parquet to MinIO, partitioned by date.
 
-    Layout: raw/openweather/year=YYYY/month=MM/day=DD/{source}_{timestamp}.json
+    Layout: raw/{source}/year=YYYY/month=MM/day=DD/{source}_{city}_{ts}.parquet
     """
 
     def __init__(self, config: PipelineConfig) -> None:
@@ -30,61 +32,92 @@ class DataLakeClient:
         )
         self._bucket = config.minio_bucket
         self._ensure_bucket()
+        logger.info(
+            "DataLakeClient initialized — endpoint=%s bucket=%s",
+            config.minio_endpoint,
+            self._bucket,
+        )
 
     def _ensure_bucket(self) -> None:
         try:
             if not self._client.bucket_exists(self._bucket):
                 self._client.make_bucket(self._bucket)
-                logger.info("Created bucket %s", self._bucket)
+                logger.info("Created bucket: %s", self._bucket)
+            else:
+                logger.info("Bucket exists: %s", self._bucket)
         except S3Error as exc:
             logger.error("Failed to ensure bucket %s: %s", self._bucket, exc)
             raise
 
-    def store_raw(self, data: dict, source: str, city: str) -> str:
-        """Store a raw JSON response and return the object key."""
+    def store_raw_parquet(self, data: dict, source: str, city: str) -> str:
+        """Store a raw API response as a Parquet file, return the S3 key.
+
+        The dict is flattened into a single-row Parquet file with the full
+        JSON payload stored alongside extracted top-level fields.
+        """
         now = datetime.now(timezone.utc)
         timestamp = int(now.timestamp())
         key = (
-            f"raw/openweather/"
+            f"raw/{source}/"
             f"year={now.year}/month={now.month:02d}/day={now.day:02d}/"
-            f"{source}_{city.lower()}_{timestamp}.json"
+            f"{source}_{city.lower()}_{timestamp}.parquet"
         )
 
-        payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        row = {
+            "city": city,
+            "source": source,
+            "extracted_at": now.isoformat(),
+            "raw_json": json.dumps(data, ensure_ascii=False),
+        }
+        if source == "weather_current":
+            row["temperature"] = data.get("main", {}).get("temp")
+            row["humidity"] = data.get("main", {}).get("humidity")
+            row["wind_speed"] = data.get("wind", {}).get("speed")
+            row["weather_main"] = (data.get("weather", [{}])[0].get("main", ""))
+            row["dt"] = data.get("dt")
+        elif source == "weather_forecast":
+            row["forecast_count"] = data.get("cnt")
+            row["city_name"] = data.get("city", {}).get("name")
+
+        table = pa.Table.from_pylist([row])
+        buf = io.BytesIO()
+        pq.write_table(table, buf, compression="snappy")
+        buf.seek(0)
+        payload_size = buf.getbuffer().nbytes
+
         self._client.put_object(
             bucket_name=self._bucket,
             object_name=key,
-            data=io.BytesIO(payload),
-            length=len(payload),
-            content_type="application/json",
+            data=buf,
+            length=payload_size,
+            content_type="application/octet-stream",
         )
-        logger.info("Stored raw data: s3://%s/%s (%d bytes)", self._bucket, key, len(payload))
-        return key
+
+        s3_url = f"s3://{self._bucket}/{key}"
+        logger.info(
+            "Stored Parquet: %s (%d bytes) | city=%s source=%s",
+            s3_url, payload_size, city, source,
+        )
+        return s3_url
+
+    def store_raw(self, data: dict, source: str, city: str) -> str:
+        """Alias — delegates to store_raw_parquet for backward compat."""
+        return self.store_raw_parquet(data, source, city)
 
     def list_raw_files(
-        self, date_start: datetime, date_end: datetime, source: str = "openweather"
+        self, prefix: str = "raw/", recursive: bool = True,
     ) -> list[str]:
-        """List raw JSON keys within a date range (inclusive)."""
+        """List all raw data files under a prefix."""
         keys: list[str] = []
-        current = date_start
-        while current <= date_end:
-            prefix = (
-                f"raw/{source}/"
-                f"year={current.year}/month={current.month:02d}/day={current.day:02d}/"
-            )
-            for obj in self._client.list_objects(self._bucket, prefix=prefix):
-                keys.append(obj.object_name)
-            current = current.replace(day=current.day + 1) if current.day < 28 else (
-                current.replace(month=current.month + 1, day=1) if current.month < 12
-                else current.replace(year=current.year + 1, month=1, day=1)
-            )
+        for obj in self._client.list_objects(self._bucket, prefix=prefix, recursive=recursive):
+            keys.append(obj.object_name)
         return keys
 
-    def get_raw(self, key: str) -> dict:
-        """Download and parse a raw JSON file from the data lake."""
+    def get_raw(self, key: str) -> bytes:
+        """Download a raw file from the data lake."""
         response = self._client.get_object(self._bucket, key)
         try:
-            return json.loads(response.read().decode("utf-8"))
+            return response.read()
         finally:
             response.close()
             response.release_conn()

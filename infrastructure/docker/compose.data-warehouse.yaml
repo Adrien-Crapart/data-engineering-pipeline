@@ -1,8 +1,16 @@
 name: data-engineering-pipeline
+
+networks:
+  pipeline-network:
+    driver: bridge
+
 services:
   postgres:
     image: postgres:16-alpine
     container_name: postgres
+    restart: always
+    networks:
+      - pipeline-network
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -11,9 +19,9 @@ services:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ../../infrastructure/scripts/00_create_roles.sql:/docker-entrypoint-initdb.d/00_create_roles.sql
-      - ../../infrastructure/scripts/01_create_databases.sql:/docker-entrypoint-initdb.d/01_create_databases.sql
-      - ../../infrastructure/scripts/02_init_schemas.sql:/docker-entrypoint-initdb.d/02_init_schemas.sql
+      - ./infrastructure/scripts/00_create_roles.sql:/docker-entrypoint-initdb.d/00_create_roles.sql
+      - ./infrastructure/scripts/01_create_databases.sql:/docker-entrypoint-initdb.d/01_create_databases.sql
+      - ./infrastructure/scripts/02_init_schemas.sql:/docker-entrypoint-initdb.d/02_init_schemas.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
       interval: 10s
@@ -30,6 +38,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis
+    restart: always
+    networks:
+      - pipeline-network
     ports:
       - "6379:6379"
     volumes:

@@ -1,7 +1,6 @@
-# Soda Core checks for mart layer models.
-# These verify analytical model consistency.
+# Soda Core checks for mart layer (Gold).
 
-checks for public_mart.weather_daily_summary:
+checks for weather_daily_summary:
   - row_count > 0:
       name: Daily summary has data
   - missing_count(city_name) = 0:
@@ -14,7 +13,7 @@ checks for public_mart.weather_daily_summary:
       name: Observation count is positive
       valid min: 1
 
-checks for public_mart.city_weather_metrics:
+checks for city_weather_metrics:
   - row_count > 0:
       name: City metrics has data
   - duplicate_count(city_name) = 0:

@@ -1,9 +1,11 @@
 x-airflow-common: &airflow-common
   build:
-    context: ../../orchestration
+    context: ./orchestration/
     dockerfile: Dockerfile
+  networks:
+    - pipeline-network
   env_file:
-    - ../../.env
+    - .env
   environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
@@ -26,15 +28,21 @@ x-airflow-common: &airflow-common
     AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     AWS_DEFAULT_REGION: us-east-1
     AWS_ENDPOINT_URL_S3: http://minio:9000
+    COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-data-engineering-pipeline}
+    PROJECT_ROOT: ${PROJECT_ROOT:-.}
     PYTHONPATH: /opt/airflow
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
   volumes:
-    - ../../orchestration/dags:/opt/airflow/dags
-    - ../../orchestration/plugins:/opt/airflow/plugins
-    - ../../monitoring:/opt/airflow/monitoring
-    - ../../orchestration/config:/opt/airflow/config
+    - ./orchestration/dags:/opt/airflow/dags
+    - ./orchestration/plugins:/opt/airflow/plugins
+    - ./monitoring:/opt/airflow/monitoring
+    - ./orchestration/config:/opt/airflow/config
 
 name: data-engineering-pipeline
+
+networks:
+  pipeline-network:
+    driver: bridge
 
 services:
   airflow-init:
@@ -139,9 +147,9 @@ services:
       <<: *airflow-common-env
       DUMB_INIT_SETSID: "0"
     volumes:
-      - ../../orchestration/dags:/opt/airflow/dags
-      - ../../orchestration/plugins:/opt/airflow/plugins
-      - ../../monitoring:/opt/airflow/monitoring
+      - ./orchestration/dags:/opt/airflow/dags
+      - ./orchestration/plugins:/opt/airflow/plugins
+      - ./monitoring:/opt/airflow/monitoring
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD-SHELL", 'celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}" || celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"']

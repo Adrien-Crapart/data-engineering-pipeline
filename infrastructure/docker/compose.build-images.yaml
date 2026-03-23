@@ -1,29 +1,29 @@
+networks:
+  pipeline-network:
+    driver: bridge
+
 services:
   dlt-runner:
     build:
-      context: ../../ingestion
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: ingestion/Dockerfile
     image: weather-pipeline-dlt:1.0.0
     profiles:
       - build-only
 
   dbt-runner:
     build:
-      context: ../../transformations
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: transformations/Dockerfile
     image: weather-pipeline-dbt:1.0.0
     profiles:
       - build-only
 
   soda-runner:
     build:
-      context: ../../data_quality
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: data_quality/Dockerfile
     image: weather-pipeline-soda:1.0.0
     profiles:
       - build-only
 
-networks:
-  pipeline-network:
-    external: true
-    name: ${COMPOSE_PROJECT_NAME:-data-engineering-pipeline}_pipeline-network

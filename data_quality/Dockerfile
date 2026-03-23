@@ -12,7 +12,11 @@ COPY data_quality/pyproject.toml pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project 2>/dev/null || \
     uv pip install --system --no-cache \
-        "soda-core-postgres>=3.3.0"
+        "soda-core-postgres>=3.3.0" \
+        "great_expectations>=1.0.0" \
+        "minio>=7.2.0" \
+        "psycopg2-binary>=2.9.0" \
+        "pyyaml>=6.0"
 
 FROM python:3.12-slim-bookworm
 

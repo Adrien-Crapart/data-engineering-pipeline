@@ -8,23 +8,23 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-COPY transformations/dbt/pyproject.toml pyproject.toml
+COPY transformations/pyproject.toml pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project 2>/dev/null || \
     uv pip install --system --no-cache \
-        "dbt-duckdb>=1.9.0" \
-        "duckdb>=1.0.0" \
-        "elementary-data[duckdb]"
+        "dbt-postgres>=1.9.0" \
+        "elementary-data[postgres]" \
+        "minio>=7.2.0"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
+    && apt-get install -y --no-install-recommends git postgresql-client \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash git \
+    && apt-get install -y --no-install-recommends bash git postgresql-client \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,4 +33,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 WORKDIR /app
 
-ENTRYPOINT ["bash", "-c"]
+COPY transformations/scripts/ /app/scripts/
+RUN chmod +x /app/scripts/entrypoint.sh
+
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+CMD ["run"]

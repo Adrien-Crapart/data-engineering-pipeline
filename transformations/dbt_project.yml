@@ -14,13 +14,25 @@ clean-targets:
   - target
   - dbt_packages
 
+vars:
+  dbt_utils_dispatch_list: [dbt_utils]
+
 models:
   weather_pipeline:
     staging:
       +materialized: view
       +schema: staging
+    core:
+      +materialized: table
+      +schema: core
     marts:
       +materialized: table
       +schema: mart
+    analytic:
+      +materialized: table
+      +schema: analytic
   elementary:
     +schema: elementary
+
+on-run-end:
+  - "{{ dbt_utils.log_info('Pipeline run completed') }}"

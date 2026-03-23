@@ -1,7 +1,8 @@
 .PHONY: help start stop restart status logs clean prune \
        start-warehouse start-lake start-airflow start-monitoring start-metadata \
        build build-airflow build-dlt build-dbt build-soda build-all \
-       psql airflow-shell dbt-run dbt-test dbt-docs dlt-run soda-check \
+       ensure-network rebuild \
+       psql airflow-shell dbt-run dbt-test dbt-docs dlt-run soda-check gx-check \
        lint lint-sql format check pre-commit pre-commit-install \
        test test-unit test-integration test-cov \
        doctor validate-env urls
@@ -11,16 +12,23 @@
 # Cross-platform (Linux, macOS, Windows via MSYS2/Git Bash)
 # ============================================================
 
-SHELL := /bin/bash
-
-# --- OS detection ---
+# --- OS detection & shell ---
 ifeq ($(OS),Windows_NT)
     DETECTED_OS := Windows
     DOCKER_CONTEXT := --context desktop-linux
+    # Git for Windows provides bash; fallback to WSL bash
+    GIT_BASH := $(shell where git 2>NUL)
+    ifneq ($(GIT_BASH),)
+        SHELL := $(subst cmd\git.exe,bin\bash.exe,$(GIT_BASH))
+    else
+        SHELL := bash
+    endif
 else
     DETECTED_OS := $(shell uname -s)
     DOCKER_CONTEXT :=
+    SHELL := /bin/bash
 endif
+.SHELLFLAGS := -c
 
 # --- Config ---
 ENV_FILE     := .env
@@ -41,11 +49,21 @@ COMPOSE_FULL := $(COMPOSE_ALL) -f $(F_METADATA) --profile openmetadata
 DC_BASE = docker $(DOCKER_CONTEXT) compose -p data-engineering-pipeline \
           --project-directory . --env-file $(ENV_FILE)
 
+# Build variant: resolves paths relative to compose files (not project-directory)
+DC_BUILD = docker $(DOCKER_CONTEXT) compose -p data-engineering-pipeline \
+           --env-file $(ENV_FILE)
+
 DC      = $(DC_BASE) $(COMPOSE_ALL)
 DC_FULL = $(DC_BASE) $(COMPOSE_FULL)
 
-# Wait helper (seconds)
-WAIT = sleep
+PROJECT_NAME := data-engineering-pipeline
+NETWORK_NAME := $(PROJECT_NAME)_pipeline-network
+
+# Wait helper — GnuWin32 make may bypass SHELL for simple commands,
+# so we force execution through bash -c to ensure sleep is available.
+define WAIT
+$(SHELL) -c 'sleep $(1)'
+endef
 
 # ============================================================
 #  HELP (default target)
@@ -77,14 +95,18 @@ help: ## Show available commands
 	@echo "    make build-dbt          Build dbt runner image"
 	@echo "    make build-soda         Build Soda runner image"
 	@echo "    make build-all          Build all images"
+	@echo "    make rebuild            Force-rebuild all images (no cache)"
+	@echo "    make ensure-network     Create pipeline network if missing"
 	@echo ""
 	@echo "  Dev Tools:"
 	@echo "    make psql               Open psql shell on weather_db"
 	@echo "    make airflow-shell      Open bash in Airflow worker"
 	@echo "    make dbt-run            Run dbt models via Docker"
 	@echo "    make dbt-test           Run dbt tests via Docker"
+	@echo "    make dbt-docs           Generate dbt docs and upload to S3"
 	@echo "    make dlt-run            Run DLT ingestion via Docker"
 	@echo "    make soda-check         Run Soda checks via Docker"
+	@echo "    make gx-check           Run Great Expectations via Docker"
 	@echo ""
 	@echo "  Quality:"
 	@echo "    make lint               Run ruff linter"
@@ -138,19 +160,19 @@ start-warehouse: ## Start PostgreSQL + Redis
 	@echo "--- Starting Data Warehouse (PostgreSQL + Redis) ---"
 	$(DC_BASE) -f $(F_WAREHOUSE) up -d
 	@echo "Waiting for warehouse to be healthy..."
-	@$(WAIT) 10
+	@$(call WAIT,10)
 
 start-lake: ## Start MinIO
 	@echo "--- Starting Data Lake (MinIO) ---"
 	$(DC_BASE) -f $(F_WAREHOUSE) -f $(F_LAKE) up -d minio minio-init
 	@echo "Waiting for MinIO to be healthy..."
-	@$(WAIT) 5
+	@$(call WAIT,5)
 
 start-airflow: build-airflow ## Start Airflow stack
 	@echo "--- Starting Airflow ---"
 	$(DC_BASE) -f $(F_WAREHOUSE) -f $(F_LAKE) -f $(F_AIRFLOW) up -d
 	@echo "Waiting for Airflow to initialize..."
-	@$(WAIT) 15
+	@$(call WAIT,15)
 
 start-monitoring: ## Start Prometheus + Grafana
 	@echo "--- Starting Monitoring ---"
@@ -161,8 +183,14 @@ start-metadata: ## Start OpenMetadata
 	$(DC_BASE) -f $(F_WAREHOUSE) -f $(F_METADATA) --profile openmetadata up -d
 
 # ============================================================
-#  BUILD
+#  BUILD & NETWORK
 # ============================================================
+
+ensure-network: ## Create the pipeline Docker network if it doesn't exist
+	@docker $(DOCKER_CONTEXT) network inspect $(NETWORK_NAME) >/dev/null 2>&1 \
+		|| docker $(DOCKER_CONTEXT) network create $(NETWORK_NAME) >/dev/null 2>&1 \
+		|| true
+	@echo "Network $(NETWORK_NAME): OK"
 
 build: build-airflow ## Build Airflow image (alias)
 
@@ -172,17 +200,25 @@ build-airflow: ## Build Airflow image
 
 build-dlt: ## Build DLT runner image
 	@echo "--- Building DLT runner image ---"
-	$(DC_BASE) -f $(F_BUILD) --profile build-only build dlt-runner
+	$(DC_BUILD) -f $(F_BUILD) --profile build-only build dlt-runner
 
 build-dbt: ## Build dbt runner image
 	@echo "--- Building dbt runner image ---"
-	$(DC_BASE) -f $(F_BUILD) --profile build-only build dbt-runner
+	$(DC_BUILD) -f $(F_BUILD) --profile build-only build dbt-runner
 
 build-soda: ## Build Soda runner image
 	@echo "--- Building Soda runner image ---"
-	$(DC_BASE) -f $(F_BUILD) --profile build-only build soda-runner
+	$(DC_BUILD) -f $(F_BUILD) --profile build-only build soda-runner
 
 build-all: build-airflow build-dlt build-dbt build-soda ## Build all images
+
+rebuild: ensure-network ## Force-rebuild all images (no cache) and ensure network
+	@echo "--- Force rebuilding all images (no cache) ---"
+	$(DC_BASE) -f $(F_AIRFLOW) build --no-cache
+	$(DC_BUILD) -f $(F_BUILD) --profile build-only build --no-cache dlt-runner
+	$(DC_BUILD) -f $(F_BUILD) --profile build-only build --no-cache dbt-runner
+	$(DC_BUILD) -f $(F_BUILD) --profile build-only build --no-cache soda-runner
+	@echo "All images rebuilt. Run 'make restart' to apply."
 
 # ============================================================
 #  DEV TOOLS
@@ -194,36 +230,62 @@ psql: ## Open psql shell on weather_db
 airflow-shell: ## Open bash in Airflow worker
 	$(DC_BASE) -f $(F_WAREHOUSE) -f $(F_LAKE) -f $(F_AIRFLOW) exec airflow-worker bash
 
-dbt-run: ## Run dbt models via Docker
+dbt-run: ensure-network ## Run dbt models via Docker
 	docker $(DOCKER_CONTEXT) run --rm \
-		--network data-engineering-pipeline_pipeline-network \
+		--network $(NETWORK_NAME) \
 		-e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
 		-e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
 		-e MINIO_ENDPOINT_HOST=minio:9000 \
 		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
 		weather-pipeline-dbt:1.0.0 run
 
-dbt-test: ## Run dbt tests via Docker
+dbt-test: ensure-network ## Run dbt tests via Docker
 	docker $(DOCKER_CONTEXT) run --rm \
-		--network data-engineering-pipeline_pipeline-network \
+		--network $(NETWORK_NAME) \
 		-e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
 		-e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
 		-e MINIO_ENDPOINT_HOST=minio:9000 \
 		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
 		weather-pipeline-dbt:1.0.0 test
 
-dlt-run: ## Run DLT ingestion via Docker
+dlt-run: ensure-network ## Run DLT ingestion via Docker
 	docker $(DOCKER_CONTEXT) run --rm \
-		--network data-engineering-pipeline_pipeline-network \
+		--network $(NETWORK_NAME) \
 		--env-file $(ENV_FILE) \
 		weather-pipeline-dlt:1.0.0
 
-soda-check: ## Run Soda checks via Docker
+dbt-docs: ensure-network ## Generate dbt docs and upload to S3
 	docker $(DOCKER_CONTEXT) run --rm \
-		--network data-engineering-pipeline_pipeline-network \
+		--network $(NETWORK_NAME) \
+		-v $(CURDIR)/transformations:/app \
 		-e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
 		-e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
-		weather-pipeline-soda:1.0.0
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+		-e MINIO_BUCKET_NAME=weather-data-lake \
+		weather-pipeline-dbt:1.0.0 docs
+
+soda-check: ensure-network ## Run Soda checks via Docker (staging)
+	docker $(DOCKER_CONTEXT) run --rm \
+		--network $(NETWORK_NAME) \
+		-v $(CURDIR)/data_quality:/app/data_quality \
+		-e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
+		-e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
+		weather-pipeline-soda:1.0.0 \
+		"soda scan -d weather_db -c /app/data_quality/soda/configuration.yml /app/data_quality/soda/checks/staging_checks.yml"
+
+gx-check: ensure-network ## Run Great Expectations validations via Docker
+	docker $(DOCKER_CONTEXT) run --rm \
+		--network $(NETWORK_NAME) \
+		-v $(CURDIR)/data_quality:/app/data_quality \
+		-e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
+		-e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+		-e MINIO_BUCKET_NAME=weather-data-lake \
+		-e PYTHONPATH=/app \
+		weather-pipeline-soda:1.0.0 \
+		"cd /app && python -m data_quality.expectations.run_validations --layer all"
 
 # ============================================================
 #  QUALITY
@@ -233,7 +295,7 @@ lint: ## Run ruff linter
 	uv run --extra dev ruff check .
 
 lint-sql: ## Run SQLFluff on dbt models
-	uv run --extra dev sqlfluff lint transformations/dbt/models/ || true
+	uv run --extra dev sqlfluff lint transformations/models/ || true
 
 format: ## Auto-format Python code
 	uv run --extra dev ruff format .

@@ -1,8 +1,15 @@
 name: data-engineering-pipeline
+
+networks:
+  pipeline-network:
+    driver: bridge
+
 services:
   openmetadata-elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.16.6
     container_name: openmetadata-elasticsearch
+    networks:
+      - pipeline-network
     environment:
       discovery.type: single-node
       ES_JAVA_OPTS: "-Xms512m -Xmx512m"
@@ -27,6 +34,8 @@ services:
   execute-migrate-all:
     image: docker.getcollate.io/openmetadata/server:${OM_SERVER_VERSION:-1.12.3}
     container_name: execute_migrate_all
+    networks:
+      - pipeline-network
     command: "./bootstrap/openmetadata-ops.sh migrate"
     environment:
       OPENMETADATA_CLUSTER_NAME: ${OM_CLUSTER_NAME:-openmetadata}
@@ -80,6 +89,8 @@ services:
     image: docker.getcollate.io/openmetadata/server:${OM_SERVER_VERSION:-1.12.3}
     container_name: openmetadata_server
     restart: unless-stopped
+    networks:
+      - pipeline-network
     environment:
       OPENMETADATA_CLUSTER_NAME: ${OM_CLUSTER_NAME:-openmetadata}
       SERVER_PORT: "8585"
@@ -152,6 +163,8 @@ services:
     image: docker.getcollate.io/openmetadata/ingestion:${OM_SERVER_VERSION:-1.12.3}
     container_name: openmetadata_ingestion
     restart: unless-stopped
+    networks:
+      - pipeline-network
     environment:
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
       AIRFLOW__CORE__EXECUTOR: LocalExecutor

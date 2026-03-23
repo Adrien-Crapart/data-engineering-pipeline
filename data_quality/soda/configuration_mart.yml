@@ -5,4 +5,4 @@ data_source weather_db:
   username: ${POSTGRES_USER}
   password: ${POSTGRES_PASSWORD}
   database: ${POSTGRES_DB}
-  schema: staging
+  schema: mart
