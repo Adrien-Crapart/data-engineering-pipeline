@@ -29,6 +29,9 @@ x-airflow-common: &airflow-common
     SMTP_PORT: "1025"
     ALERT_FROM: monitoring@weather-pipeline.local
     ALERT_TO: admin@weather-pipeline.local
+    # Monitoring DAG API credentials
+    AIRFLOW_API_USER: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+    AIRFLOW_API_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
   volumes:
     - ./orchestration/dags:/opt/airflow/dags
     - ./orchestration/plugins:/opt/airflow/plugins

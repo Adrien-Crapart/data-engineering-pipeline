@@ -1,0 +1,86 @@
+---
+description: Reuse existing infrastructure services — never create redundant instances
+globs: "{**/docker-compose*.yaml,**/docker-compose*.yml,**/compose*.yaml}"
+alwaysApply: false
+---
+
+# Infrastructure Reuse Rule
+
+## Core Principle
+
+Always reuse existing services rather than creating new redundant instances when adding new Docker services.
+
+## Existing Services
+
+### PostgreSQL (Service: `postgres`)
+- **Host**: `postgres`
+- **Port**: `5432`
+- **Database**: `weather_db`
+- **User**: `airflow` / `airflow`
+- **Schemas**: `staging`, `mart`, `core`, `analytic`, `elementary`
+- **Additional databases**: Created via init scripts for OpenMetadata when needed
+
+### Redis (Service: `redis`)
+- **Host**: `redis`
+- **Port**: `6379`
+- **Usage**: Airflow Celery broker/backend
+
+### MinIO (Service: `minio`)
+- **API**: `minio:9000`
+- **Console**: `minio:9001`
+- **Credentials**: `minioadmin` / `minioadmin`
+- **Buckets**: `weather-data-lake` (raw data), `airflow-logs` (remote logs)
+
+## What NOT to Do
+
+```yaml
+# FORBIDDEN: Creating redundant instances
+services:
+  my_service_db:
+    image: postgres:16     # NO — use existing postgres service
+  my_service_storage:
+    image: minio/minio     # NO — use existing minio service
+  my_service_cache:
+    image: redis:7         # NO — use existing redis service
+```
+
+## What to Do Instead
+
+### Need a New Database?
+Add it via SQL init scripts in `infrastructure/scripts/`:
+```sql
+CREATE DATABASE new_service_db OWNER airflow;
+```
+
+### Need a New S3 Bucket?
+Add it to the `minio-init` service entrypoint:
+```bash
+mc mb --ignore-existing myminio/new-bucket
+```
+
+### Need Redis for a New Service?
+Use a different Redis DB number:
+```yaml
+environment:
+  - REDIS_HOST=redis
+  - REDIS_DB=2  # Different DB per service
+```
+
+## Network Sharing
+
+All services must connect to the shared `pipeline-network`:
+```yaml
+networks:
+  pipeline-network:
+    external: true
+    name: ${COMPOSE_PROJECT_NAME}_pipeline-network
+```
+
+## Exceptions
+
+Separate instances are justified only for:
+1. **Security isolation** (compliance requirements)
+2. **Version incompatibility** (service needs PostgreSQL 12 vs 16)
+3. **Critical performance** (workload would impact other services)
+
+Always document the reason in a comment if creating an exception.

@@ -7,6 +7,9 @@ Runs every hour to detect:
 - Stuck DAG runs (running longer than expected)
 - Anomaly detection on run duration vs historical average
 
+Uses the Airflow REST API (not ORM) — required since Airflow 3.x forbids
+direct database access from tasks.
+
 Sends a single consolidated HTML email report per run via SMTP (MailHog).
 """
 
@@ -15,18 +18,16 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+import time
 from datetime import timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
 import pendulum
-from airflow.decorators import dag, task
-from airflow.models import DagModel, DagRun
-from airflow.utils.session import provide_session
-from airflow.utils.state import DagRunState
+import requests
+from airflow.sdk import dag, task
 from jinja2 import Environment, FileSystemLoader
-from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ CRITICAL_DAGS = [
     "transformation_pipeline",
 ]
 
-STUCK_RUN_THRESHOLD = pendulum.duration(hours=4)
+STUCK_RUN_THRESHOLD_SECONDS = 4 * 3600
 ANOMALY_DURATION_FACTOR = 3.0
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "mailhog")
@@ -46,6 +47,35 @@ ALERT_FROM = os.environ.get("ALERT_FROM", "monitoring@weather-pipeline.local")
 ALERT_TO = os.environ.get("ALERT_TO", "admin@weather-pipeline.local")
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+
+AIRFLOW_API_URL = os.environ.get(
+    "AIRFLOW__CORE__EXECUTION_API_SERVER_URL",
+    "http://airflow-api-server:8080/execution/",
+).replace("/execution/", "")
+AIRFLOW_API_USER = os.environ.get("AIRFLOW_API_USER", "airflow")
+AIRFLOW_API_PASSWORD = os.environ.get("AIRFLOW_API_PASSWORD", "airflow")
+
+
+def _api_get(endpoint: str, token: str, params: dict | None = None, max_retries: int = 3) -> dict:
+    """Make a GET request to the Airflow REST API with retry logic."""
+    headers = {"Authorization": f"Bearer {token}"}
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(
+                f"{AIRFLOW_API_URL}{endpoint}",
+                headers=headers,
+                params=params,
+                timeout=15,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            logger.warning("API GET %s attempt %d/%d failed: %s", endpoint, attempt + 1, max_retries, exc)
+            if attempt < max_retries - 1:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"API GET {endpoint} failed after {max_retries} attempts") from last_exc
 
 
 def _on_failure_callback(context):
@@ -59,8 +89,8 @@ def _on_failure_callback(context):
 
 default_args = {
     "owner": "data-engineering",
-    "retries": 1,
-    "retry_delay": timedelta(minutes=2),
+    "retries": 2,
+    "retry_delay": timedelta(minutes=1),
     "execution_timeout": timedelta(minutes=5),
     "on_failure_callback": _on_failure_callback,
 }
@@ -79,86 +109,107 @@ default_args = {
 def airflow_monitoring():
 
     @task
-    @provide_session
-    def check_critical_dags_paused(session=None) -> dict:
+    def get_api_token() -> str:
+        """Authenticate once and return the JWT token for downstream tasks."""
+        last_exc = None
+        for attempt in range(5):
+            try:
+                resp = requests.post(
+                    f"{AIRFLOW_API_URL}/auth/token",
+                    json={"username": AIRFLOW_API_USER, "password": AIRFLOW_API_PASSWORD},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                return resp.json()["access_token"]
+            except (requests.RequestException, KeyError) as exc:
+                last_exc = exc
+                logger.warning("Auth attempt %d/5 failed: %s", attempt + 1, exc)
+                if attempt < 4:
+                    time.sleep(3 * (attempt + 1))
+        raise RuntimeError("Failed to get Airflow API token after 5 attempts") from last_exc
+
+    @task
+    def check_critical_dags_paused(token: str) -> dict:
         paused = []
         for dag_id in CRITICAL_DAGS:
-            dag_model = session.query(DagModel).filter(DagModel.dag_id == dag_id).first()
-            if dag_model and dag_model.is_paused:
-                paused.append(dag_id)
-            elif not dag_model:
+            try:
+                dag_info = _api_get(f"/api/v2/dags/{dag_id}", token)
+                if dag_info.get("is_paused"):
+                    paused.append(dag_id)
+            except RuntimeError:
                 paused.append(f"{dag_id} (NOT FOUND)")
         return {"paused_critical_dags": paused, "total_checked": len(CRITICAL_DAGS)}
 
     @task
-    @provide_session
-    def check_missed_executions(session=None) -> dict:
+    def check_missed_executions(token: str) -> dict:
         now = pendulum.now(TZ)
-        window = now - pendulum.duration(hours=24)
+        window = now.subtract(hours=24).in_tz("UTC").isoformat()
         missed = []
         for dag_id in CRITICAL_DAGS:
-            dag_model = session.query(DagModel).filter(DagModel.dag_id == dag_id).first()
-            if not dag_model or not dag_model.timetable_summary:
+            try:
+                dag_info = _api_get(f"/api/v2/dags/{dag_id}", token)
+            except RuntimeError:
                 continue
-            runs_count = (
-                session.query(func.count(DagRun.id))
-                .filter(DagRun.dag_id == dag_id, DagRun.execution_date >= window)
-                .scalar()
-            )
-            if runs_count == 0:
-                missed.append(dag_id)
+            if not dag_info.get("timetable_summary"):
+                continue
+            try:
+                runs = _api_get(
+                    f"/api/v2/dags/{dag_id}/dagRuns",
+                    token,
+                    params={"start_date_gte": window, "limit": 1},
+                )
+                if runs.get("total_entries", 0) == 0:
+                    missed.append(dag_id)
+            except RuntimeError:
+                logger.warning("Could not check runs for %s", dag_id)
         return {"missed_dags": missed}
 
     @task
-    @provide_session
-    def check_stuck_runs(session=None) -> dict:
-        now = pendulum.now(TZ)
-        cutoff = now - STUCK_RUN_THRESHOLD
-        stuck_runs = (
-            session.query(DagRun)
-            .filter(DagRun.state == DagRunState.RUNNING, DagRun.start_date < cutoff)
-            .all()
-        )
+    def check_stuck_runs(token: str) -> dict:
+        now = pendulum.now("UTC")
         stuck = []
-        for run in stuck_runs:
-            duration = now - run.start_date
-            stuck.append({"dag_id": run.dag_id, "run_id": run.run_id, "duration": str(duration)})
+        try:
+            data = _api_get("/api/v2/dagRuns", token, params={"state": "running", "limit": 100})
+            for run in data.get("dag_runs", []):
+                start = pendulum.parse(run["start_date"])
+                elapsed = now - start
+                if elapsed.total_seconds() > STUCK_RUN_THRESHOLD_SECONDS:
+                    stuck.append({
+                        "dag_id": run["dag_id"],
+                        "run_id": run["dag_run_id"],
+                        "duration": str(elapsed),
+                    })
+        except RuntimeError:
+            logger.warning("Could not check stuck runs")
         return {"stuck_runs": stuck}
 
     @task
-    @provide_session
-    def check_duration_anomalies(session=None) -> dict:
+    def check_duration_anomalies(token: str) -> dict:
         anomalies = []
         for dag_id in CRITICAL_DAGS:
-            avg_duration = (
-                session.query(func.avg(DagRun.end_date - DagRun.start_date))
-                .filter(
-                    DagRun.dag_id == dag_id,
-                    DagRun.state == DagRunState.SUCCESS,
-                    DagRun.end_date.isnot(None),
+            try:
+                runs_data = _api_get(
+                    f"/api/v2/dags/{dag_id}/dagRuns",
+                    token,
+                    params={"state": "success", "order_by": "-execution_date", "limit": 20},
                 )
-                .scalar()
-            )
-            if not avg_duration:
+            except RuntimeError:
                 continue
-            latest_run = (
-                session.query(DagRun)
-                .filter(
-                    DagRun.dag_id == dag_id,
-                    DagRun.state == DagRunState.SUCCESS,
-                    DagRun.end_date.isnot(None),
-                )
-                .order_by(DagRun.execution_date.desc())
-                .first()
-            )
-            if not latest_run or not latest_run.start_date or not latest_run.end_date:
+            durations = []
+            for r in runs_data.get("dag_runs", []):
+                if r.get("start_date") and r.get("end_date"):
+                    start = pendulum.parse(r["start_date"])
+                    end = pendulum.parse(r["end_date"])
+                    durations.append((end - start).total_seconds())
+            if len(durations) < 2:
                 continue
-            actual = latest_run.end_date - latest_run.start_date
-            if actual > avg_duration * ANOMALY_DURATION_FACTOR:
+            avg_duration = sum(durations) / len(durations)
+            latest_duration = durations[0]
+            if latest_duration > avg_duration * ANOMALY_DURATION_FACTOR:
                 anomalies.append({
                     "dag_id": dag_id,
-                    "actual_duration": str(actual),
-                    "avg_duration": str(avg_duration),
+                    "actual_duration": f"{latest_duration:.0f}s",
+                    "avg_duration": f"{avg_duration:.0f}s",
                 })
         return {"anomalies": anomalies}
 
@@ -227,10 +278,11 @@ def airflow_monitoring():
             "timestamp": now.isoformat(),
         }
 
-    paused = check_critical_dags_paused()
-    missed = check_missed_executions()
-    stuck = check_stuck_runs()
-    anomalies = check_duration_anomalies()
+    token = get_api_token()
+    paused = check_critical_dags_paused(token)
+    missed = check_missed_executions(token)
+    stuck = check_stuck_runs(token)
+    anomalies = check_duration_anomalies(token)
     send_consolidated_report(paused, missed, stuck, anomalies)
 
 

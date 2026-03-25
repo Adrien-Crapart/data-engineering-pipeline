@@ -35,7 +35,6 @@ orchestration/airflow/config/
 .idea/
 *.swp
 *.swo
-.cursor/
 
 # OS
 .DS_Store
