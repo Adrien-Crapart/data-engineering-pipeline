@@ -5,19 +5,50 @@ networks:
     driver: bridge
 
 services:
-  prometheus:
-    image: prom/prometheus:v3.10.0
+  # ── StatsD Exporter (Airflow metrics → Prometheus) ──
+  statsd-exporter:
+    image: prom/statsd-exporter:v0.27.2
+    container_name: statsd-exporter
+    restart: unless-stopped
     networks:
       - pipeline-network
+    command:
+      - "--statsd.listen-udp=:8125"
+      - "--web.listen-address=:9102"
+      - "--statsd.mapping-config=/tmp/statsd_mapping.yml"
+    ports:
+      - "9102:9102"
+      - "8125:8125/udp"
+    volumes:
+      - ./monitoring/statsd-exporter/statsd_mapping.yml:/tmp/statsd_mapping.yml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9102/metrics || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+
+  # ── Prometheus ──
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    container_name: prometheus
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=90d"
+      - "--web.enable-lifecycle"
     ports:
       - "9090:9090"
     volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
       - prometheus-data:/prometheus
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=30d"
     healthcheck:
       test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy || exit 1"]
       interval: 15s
@@ -26,13 +57,19 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
-          cpus: "0.25"
+          memory: 512M
+          cpus: "0.50"
         reservations:
           memory: 128M
+    depends_on:
+      statsd-exporter:
+        condition: service_started
 
+  # ── Prometheus Pushgateway (pipeline metrics) ──
   prometheus-pushgateway:
     image: prom/pushgateway:v1.11.2
+    container_name: prometheus-pushgateway
+    restart: unless-stopped
     networks:
       - pipeline-network
     ports:
@@ -50,14 +87,18 @@ services:
         reservations:
           memory: 64M
 
+  # ── Alertmanager ──
   alertmanager:
     image: prom/alertmanager:v0.28.1
+    container_name: alertmanager
+    restart: unless-stopped
     networks:
       - pipeline-network
     ports:
       - "9093:9093"
     volumes:
-      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
     command:
       - "--config.file=/etc/alertmanager/alertmanager.yml"
       - "--storage.path=/alertmanager"
@@ -73,9 +114,15 @@ services:
           cpus: "0.25"
         reservations:
           memory: 64M
+    depends_on:
+      mailhog:
+        condition: service_started
 
+  # ── Node Exporter (host metrics) ──
   node-exporter:
     image: prom/node-exporter:v1.9.1
+    container_name: node-exporter
+    restart: unless-stopped
     networks:
       - pipeline-network
     ports:
@@ -83,9 +130,11 @@ services:
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
+      - /:/rootfs:ro
     command:
       - "--path.procfs=/host/proc"
       - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
       - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
     healthcheck:
       test: ["CMD-SHELL", "wget --spider -q http://localhost:9100/metrics || exit 1"]
@@ -100,8 +149,29 @@ services:
         reservations:
           memory: 64M
 
+  # ── Docker Exporter (container metrics) ──
+  docker-exporter:
+    container_name: docker-exporter
+    build:
+      context: ./monitoring/docker-exporter
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+    ports:
+      - "9417:9417"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: "0.15"
+
+  # ── Grafana ──
   grafana:
     image: grafana/grafana:12.4.0
+    container_name: grafana
+    restart: unless-stopped
     networks:
       - pipeline-network
     ports:
@@ -109,9 +179,18 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/airflow-overview.json
+      GF_UNIFIED_ALERTING_ENABLED: "true"
+      GF_ALERTING_ENABLED: "false"
+      GF_SMTP_ENABLED: "true"
+      GF_SMTP_HOST: mailhog:1025
+      GF_SMTP_SKIP_VERIFY: "true"
+      GF_SMTP_FROM_ADDRESS: grafana@weather-pipeline.local
+      GF_SMTP_FROM_NAME: Grafana Alerting
+      GF_INSTALL_PLUGINS: grafana-postgresql-datasource
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
-      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
@@ -121,13 +200,81 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: 512M
           cpus: "0.50"
         reservations:
           memory: 128M
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+
+  # ── Loki (log aggregation) ──
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: loki
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3100/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.50"
+        reservations:
+          memory: 128M
+
+  # ── Promtail (log collector) ──
+  promtail:
+    image: grafana/promtail:3.4.2
+    container_name: promtail
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/config.yml
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.25"
+    depends_on:
+      loki:
+        condition: service_started
+
+  # ── MailHog (email testing) ──
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: mailhog
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
 
 volumes:
   prometheus-data:
   grafana-data:
+  loki-data:

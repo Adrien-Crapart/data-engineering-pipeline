@@ -174,9 +174,13 @@ start-airflow: build-airflow ## Start Airflow stack
 	@echo "Waiting for Airflow to initialize..."
 	@$(call WAIT,15)
 
-start-monitoring: ## Start Prometheus + Grafana
-	@echo "--- Starting Monitoring ---"
-	$(DC_BASE) -f $(F_WAREHOUSE) -f $(F_LAKE) -f $(F_MONITORING) up -d prometheus prometheus-pushgateway grafana
+start-monitoring: ## Start full monitoring stack
+	@echo "--- Starting Monitoring Stack ---"
+	$(DC_BASE) -f $(F_WAREHOUSE) -f $(F_LAKE) -f $(F_MONITORING) up -d \
+		statsd-exporter prometheus prometheus-pushgateway alertmanager \
+		node-exporter docker-exporter \
+		loki promtail \
+		mailhog grafana
 
 start-metadata: ## Start OpenMetadata
 	@echo "--- Starting OpenMetadata ---"
@@ -361,6 +365,11 @@ urls: ## Show service URLs
 	@echo "  Grafana:          http://localhost:3000  (admin/admin)"
 	@echo "  Prometheus:       http://localhost:9090"
 	@echo "  Pushgateway:      http://localhost:9091"
+	@echo "  Alertmanager:     http://localhost:9093"
+	@echo "  Loki:             http://localhost:3100"
+	@echo "  MailHog:          http://localhost:8025"
+	@echo "  StatsD Exporter:  http://localhost:9102/metrics"
+	@echo "  Docker Exporter:  http://localhost:9417/metrics"
 	@echo "  PostgreSQL:       localhost:5432         (airflow/airflow)"
 	@echo "  OpenMetadata:     http://localhost:8585  (if started with make start-metadata)"
 	@echo ""

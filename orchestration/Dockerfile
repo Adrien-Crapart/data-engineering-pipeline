@@ -10,7 +10,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 
 COPY pyproject.toml /tmp/pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv \

@@ -7,31 +7,28 @@ x-airflow-common: &airflow-common
   env_file:
     - .env
   environment: &airflow-common-env
-    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+    # Secrets and deployment-specific vars (not in airflow.cfg)
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow_user}:${AIRFLOW_DB_PASSWORD:-airflow_password}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-    AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow_user}:${AIRFLOW_DB_PASSWORD:-airflow_password}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW__API__SECRET_KEY:-RMU3ZDFjNzk4YjI0M2I4OTdhZGE5NmU0Nzc2ZWEyNDQ=}
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-dGhpcy1pcy1hLXNlY3VyZS1qd3Qtc2VjcmV0LWtleQ==}
-    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-    AIRFLOW__API__AUTH_BACKENDS: airflow.providers.fab.auth_manager.api.auth.backend.basic_auth
-    AIRFLOW__SCHEDULER__STANDALONE_DAG_PROCESSOR: "true"
-    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
-    AIRFLOW__LOGGING__REMOTE_LOGGING: "true"
-    AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: s3://airflow-logs
-    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: minio_s3
-    AIRFLOW__LOGGING__ENCRYPT_S3_LOGS: "false"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
+    # AWS/MinIO credentials
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
     AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
     AWS_DEFAULT_REGION: us-east-1
     AWS_ENDPOINT_URL_S3: http://minio:9000
+    # Project context
     COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-data-engineering-pipeline}
     PROJECT_ROOT: ${PROJECT_ROOT:-.}
     PYTHONPATH: /opt/airflow
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # SMTP for monitoring DAG emails
+    SMTP_HOST: mailhog
+    SMTP_PORT: "1025"
+    ALERT_FROM: monitoring@weather-pipeline.local
+    ALERT_TO: admin@weather-pipeline.local
   volumes:
     - ./orchestration/dags:/opt/airflow/dags
     - ./orchestration/plugins:/opt/airflow/plugins
@@ -123,18 +120,18 @@ services:
     command: dag-processor
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
-      interval: 30s
-      timeout: 10s
+      interval: 60s
+      timeout: 30s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     restart: always
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: "0.50"
+          memory: 1G
+          cpus: "0.75"
         reservations:
-          memory: 256M
+          memory: 512M
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -149,6 +146,7 @@ services:
     volumes:
       - ./orchestration/dags:/opt/airflow/dags
       - ./orchestration/plugins:/opt/airflow/plugins
+      - ./orchestration/config:/opt/airflow/config
       - ./monitoring:/opt/airflow/monitoring
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
@@ -177,18 +175,18 @@ services:
     command: triggerer
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
-      interval: 30s
-      timeout: 10s
+      interval: 60s
+      timeout: 30s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     restart: always
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 1G
           cpus: "0.50"
         reservations:
-          memory: 256M
+          memory: 512M
     depends_on:
       airflow-init:
         condition: service_completed_successfully

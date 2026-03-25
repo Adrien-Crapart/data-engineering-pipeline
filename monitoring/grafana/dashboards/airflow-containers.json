@@ -1,0 +1,501 @@
+{
+  "uid": "airflow-containers",
+  "title": "Airflow - Infrastructure & Containers",
+  "tags": ["airflow", "infrastructure", "docker"],
+  "timezone": "Europe/Paris",
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m"],
+    "time_options": ["1h", "6h", "12h", "24h", "2d", "7d", "30d", "90d", "1y"]
+  },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 100,
+      "title": "Statut des services",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "title": "API Server",
+      "description": "Serveur API Airflow (Airflow 3). Vert = actif >10min, Orange = demarre <10min, Rouge = arrete.",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 0, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"airflow-api-server\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "title": "Scheduler",
+      "description": "Planificateur qui orchestre les DAGs.",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 3, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"airflow-scheduler\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "DAG Processor",
+      "description": "Processeur de fichiers DAG (Airflow 3).",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 6, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"airflow-dag-processor\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "title": "Worker",
+      "description": "Executeur de taches Celery.",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 9, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"airflow-worker\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "title": "Triggerer",
+      "description": "Declencheur asynchrone pour les capteurs.",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 12, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"airflow-triggerer\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 6,
+      "title": "Redis",
+      "description": "Broker de messages Celery.",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 15, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"redis\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 7,
+      "title": "PostgreSQL",
+      "description": "Base de metadonnees Airflow + Weather DB.",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 18, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"postgres\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 8,
+      "title": "MinIO",
+      "description": "Stockage S3 (Data Lake + Logs).",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 3, "x": 21, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_uptime_seconds{name=\"minio\"}", "refId": "A", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 1 }, { "color": "green", "value": 600 }] },
+          "noValue": "ARRETE",
+          "mappings": [{ "type": "special", "options": { "match": "null", "result": { "text": "ARRETE", "color": "red" } } }]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 17,
+      "title": "Sante des services (Healthchecks Docker)",
+      "description": "VERT = SAIN, ROUGE = NON SAIN",
+      "type": "stat",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 4 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_health_status{name=\"airflow-api-server\"}", "legendFormat": "API Server", "instant": true, "refId": "A" },
+        { "expr": "docker_container_health_status{name=\"airflow-scheduler\"}", "legendFormat": "Scheduler", "instant": true, "refId": "B" },
+        { "expr": "docker_container_health_status{name=\"airflow-dag-processor\"}", "legendFormat": "DAG Processor", "instant": true, "refId": "C" },
+        { "expr": "docker_container_health_status{name=\"airflow-worker\"}", "legendFormat": "Worker", "instant": true, "refId": "D" },
+        { "expr": "docker_container_health_status{name=\"airflow-triggerer\"}", "legendFormat": "Triggerer", "instant": true, "refId": "E" },
+        { "expr": "docker_container_health_status{name=\"redis\"}", "legendFormat": "Redis", "instant": true, "refId": "F" },
+        { "expr": "docker_container_health_status{name=\"postgres\"}", "legendFormat": "PostgreSQL", "instant": true, "refId": "G" },
+        { "expr": "docker_container_health_status{name=\"minio\"}", "legendFormat": "MinIO", "instant": true, "refId": "H" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.5 }, { "color": "green", "value": 1 }] },
+          "mappings": [
+            { "type": "value", "options": { "-1": { "text": "N/A", "color": "text" }, "0": { "text": "NON SAIN", "color": "red" }, "0.5": { "text": "EN COURS", "color": "orange" }, "1": { "text": "SAIN", "color": "green" } }}
+          ]
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "value_and_name", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 101,
+      "title": "Disponibilite des services (Timeline)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "collapsed": false
+    },
+    {
+      "id": 16,
+      "title": "Disponibilite par service (Historique UP/DOWN)",
+      "description": "Timeline de disponibilite. Vert = UP, Rouge = DOWN.",
+      "type": "state-timeline",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "docker_container_running{name=~\"airflow-api-server|airflow-scheduler|airflow-dag-processor|airflow-worker|airflow-triggerer|postgres|redis|minio\"}", "legendFormat": "{{ name }}", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 80, "lineWidth": 0 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+          ]
+        }
+      },
+      "options": { "showValue": "auto", "alignValue": "center", "mergeValues": true, "rowHeight": 0.8 }
+    },
+    {
+      "id": 15,
+      "title": "Redemarrages par conteneur",
+      "description": "Nombre total de redemarrages de chaque conteneur.",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "docker_container_restart_count{name=~\"airflow-api-server|airflow-scheduler|airflow-dag-processor|airflow-worker|airflow-triggerer|postgres|redis|minio\"}",
+          "legendFormat": "{{ name }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "showPoints": "auto", "drawStyle": "line" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 3 }, { "color": "red", "value": 10 }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] } }
+    },
+
+    {
+      "id": 102,
+      "title": "Ressources des conteneurs (CPU et Memoire)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "title": "Utilisation CPU par conteneur (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "docker_container_cpu_usage_percent{name=~\"airflow-api-server|airflow-scheduler|airflow-dag-processor|airflow-worker|airflow-triggerer|postgres|redis|minio\"}",
+          "legendFormat": "{{ name }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never", "axisSoftMax": 100 },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 50 }, { "color": "red", "value": 80 }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 11,
+      "title": "Utilisation memoire par conteneur (RAM)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "docker_container_memory_usage_bytes{name=~\"airflow-api-server|airflow-scheduler|airflow-dag-processor|airflow-worker|airflow-triggerer|postgres|redis|minio\"}",
+          "legendFormat": "{{ name }}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1073741824 }, { "color": "red", "value": 2147483648 }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    {
+      "id": 25,
+      "title": "Reseau conteneurs (Debit entrant/sortant)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (name) (docker_container_network_rx_bytes{name=~\"airflow-api-server|airflow-scheduler|airflow-dag-processor|airflow-worker|airflow-triggerer|postgres|redis|minio\"})", "legendFormat": "{{ name }} RX" },
+        { "expr": "sum by (name) (docker_container_network_tx_bytes{name=~\"airflow-api-server|airflow-scheduler|airflow-dag-processor|airflow-worker|airflow-triggerer|postgres|redis|minio\"})", "legendFormat": "{{ name }} TX" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "noValue": "0"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    {
+      "id": 103,
+      "title": "Machine hote (Ressources du serveur)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
+      "collapsed": false
+    },
+    {
+      "id": 20,
+      "title": "CPU hote (%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 42 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "100 - (avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)", "legendFormat": "Utilisation CPU %" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 }] },
+          "noValue": "0"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "title": "Memoire hote (RAM)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 42 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes", "legendFormat": "Utilisee" },
+        { "expr": "node_memory_MemAvailable_bytes", "legendFormat": "Disponible" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "showPoints": "never", "stacking": { "mode": "normal" } },
+          "noValue": "0"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Utilisee" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Disponible" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] }
+        ]
+      }
+    },
+    {
+      "id": 22,
+      "title": "CPU disponible (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 50 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100", "legendFormat": "% libre" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 15 }, { "color": "green", "value": 30 }] },
+          "noValue": "0"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "title": "RAM disponible (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 50 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "(node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", "legendFormat": "% libre" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 15 }, { "color": "green", "value": 30 }] },
+          "noValue": "0"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "title": "Disque utilise (%)",
+      "type": "gauge",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 50 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "(1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\",mountpoint=\"/\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\",mountpoint=\"/\"})) * 100", "legendFormat": "% utilise" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 70 }, { "color": "red", "value": 85 }] },
+          "noValue": "0"
+        }
+      }
+    },
+
+    {
+      "id": 104,
+      "title": "Journaux des conteneurs (Logs en temps reel)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+      "collapsed": false
+    },
+    {
+      "id": 31,
+      "title": "Logs Scheduler",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+      "datasource": { "uid": "loki" },
+      "targets": [
+        { "expr": "{job=\"docker\", container_name=\"airflow-scheduler\"}", "legendFormat": "" }
+      ],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Descending", "dedupStrategy": "none", "enableLogDetails": true }
+    },
+    {
+      "id": 32,
+      "title": "Logs Worker",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+      "datasource": { "uid": "loki" },
+      "targets": [
+        { "expr": "{job=\"docker\", container_name=~\"airflow-worker\"}", "legendFormat": "", "refId": "A" }
+      ],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Descending", "dedupStrategy": "exact", "enableLogDetails": true },
+      "fieldConfig": { "defaults": { "noValue": "Worker au repos - les logs de taches sont sur S3/MinIO" } }
+    },
+    {
+      "id": 33,
+      "title": "Logs API Server",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 65 },
+      "datasource": { "uid": "loki" },
+      "targets": [
+        { "expr": "{job=\"docker\", container_name=\"airflow-api-server\"}", "legendFormat": "" }
+      ],
+      "options": { "showTime": true, "showLabels": false, "wrapLogMessage": true, "sortOrder": "Descending", "dedupStrategy": "none", "enableLogDetails": true }
+    },
+    {
+      "id": 34,
+      "title": "Logs Infrastructure (PostgreSQL, Redis, MinIO)",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 65 },
+      "datasource": { "uid": "loki" },
+      "targets": [
+        { "expr": "{job=\"docker\", container_name=~\"postgres|redis|minio\"} | line_format \"[{{.container_name}}] {{__line__}}\"", "legendFormat": "" }
+      ],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true, "sortOrder": "Descending", "dedupStrategy": "none", "enableLogDetails": true }
+    },
+    {
+      "id": 35,
+      "title": "Logs Monitoring (Prometheus, Grafana, Loki)",
+      "type": "logs",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 73 },
+      "datasource": { "uid": "loki" },
+      "targets": [
+        { "expr": "{job=\"docker\", container_name=~\"prometheus|grafana|loki|promtail|statsd-exporter|docker-exporter|node-exporter\"} | line_format \"[{{.container_name}}] {{__line__}}\"", "legendFormat": "" }
+      ],
+      "options": { "showTime": true, "showLabels": true, "wrapLogMessage": true, "sortOrder": "Descending", "dedupStrategy": "none", "enableLogDetails": true }
+    }
+  ],
+  "schemaVersion": 39
+}

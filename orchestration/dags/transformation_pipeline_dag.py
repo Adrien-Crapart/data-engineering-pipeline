@@ -26,7 +26,6 @@ from pathlib import Path
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import dag, task
 from cosmos.operators.docker import (
-    DbtDepsDockerOperator,
     DbtRunDockerOperator,
     DbtTestDockerOperator,
 )
@@ -132,13 +131,18 @@ def transformation_pipeline():
         "environment": {**PG_ENV, **MINIO_ENV},
     }
 
-    # --- dbt deps via Cosmos ---
-    dbt_install_deps = DbtDepsDockerOperator(
+    # --- dbt deps via DockerOperator (no Cosmos equivalent) ---
+    dbt_install_deps = DockerOperator(
         task_id="dbt_install_deps",
-        project_dir=DBT_PROJECT_DIR,
-        schema="public",
-        conn_id="postgres_default",
-        **cosmos_operator_args,
+        image=DBT_IMAGE,
+        command="deps",
+        mounts=[
+            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
+        ],
+        environment={**PG_ENV, **MINIO_ENV},
+        mem_limit=DBT_MEM_LIMIT,
+        execution_timeout=timedelta(minutes=10),
+        **DOCKER_DEFAULTS,
     )
 
     # --- dbt run: core + mart + analytic via Cosmos ---
