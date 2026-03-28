@@ -109,10 +109,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: "1.00"
+          memory: 2G
+          cpus: "1.50"
         reservations:
-          memory: 512M
+          memory: 1G
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -131,10 +131,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: "0.75"
+          memory: 1536M
+          cpus: "1.00"
         reservations:
-          memory: 512M
+          memory: 768M
     depends_on:
       airflow-init:
         condition: service_completed_successfully

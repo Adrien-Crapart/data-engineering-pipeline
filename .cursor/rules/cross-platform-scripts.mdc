@@ -21,23 +21,26 @@ alwaysApply: true
 | `.bat` | FORBIDDEN | Never |
 | `.cmd` | FORBIDDEN | Never |
 | `.ps1` | FORBIDDEN | Never |
-| `Makefile` | RECOMMENDED | Automation, DX |
+| `justfile` | REQUIRED | Primary automation surface |
+| `Makefile` | FORBIDDEN | Replaced by justfile |
 | `.sh` | ALLOWED | Docker containers only |
 | `.py` | ALLOWED | Complex cross-platform scripts |
 
 ## Recommended Approach
 
-### 1. Use Makefile (Preferred)
+### 1. Use justfile (Required)
 
-The Makefile is the primary automation surface:
+The `justfile` is the single automation entry point. It is cross-platform by design:
 
-```makefile
-# Works on Linux, macOS, Windows (with Make via MSYS2/Git Bash)
+```just
+set shell := ["bash", "-cu"]
+set dotenv-load := true
+
 start:
-	docker compose up -d
+    docker compose up -d
 
 test:
-	uv run pytest tests/ -v
+    uv run --extra dev pytest tests/ -v
 ```
 
 ### 2. Shell Scripts for Docker Only
@@ -52,6 +55,8 @@ ENTRYPOINT ["/entrypoint.sh"]
 
 ### 3. Python Scripts for Complex Operations
 
+When logic is too complex for a justfile recipe, use Python:
+
 ```python
 #!/usr/bin/env python3
 import subprocess
@@ -62,30 +67,9 @@ def main():
     subprocess.run(["docker", "compose", "up", "-d"])
 ```
 
-## Cross-Platform Makefile Patterns
-
-### OS Detection
-
-```makefile
-ifeq ($(OS),Windows_NT)
-    DETECTED_OS := Windows
-    DOCKER_CONTEXT := --context desktop-linux
-else
-    DETECTED_OS := $(shell uname -s)
-    DOCKER_CONTEXT :=
-endif
-```
-
-### Safe Redirects and Commands
-
-- Use `>/dev/null 2>&1` not `>NUL`
-- Use `@echo ""` not `echo.`
-- Use `sleep X` not `timeout /t X`
-- Use `|| true` not `|| echo.`
-
 ## Checklist Before Creating a Script
 
-- [ ] Can Makefile do the same thing?
+- [ ] Can the justfile do the same thing?
 - [ ] Can Python do the same thing?
 - [ ] Is it for a Docker container? -> `.sh`
 - [ ] Is it documented in the README?

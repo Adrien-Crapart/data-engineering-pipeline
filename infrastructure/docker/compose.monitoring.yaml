@@ -57,10 +57,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: "0.50"
+          memory: 1G
+          cpus: "1.00"
         reservations:
-          memory: 128M
+          memory: 512M
     depends_on:
       statsd-exporter:
         condition: service_started
@@ -200,10 +200,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: "0.50"
+          memory: 768M
+          cpus: "0.75"
         reservations:
-          memory: 128M
+          memory: 256M
     depends_on:
       prometheus:
         condition: service_started
@@ -232,10 +232,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: "0.50"
+          memory: 768M
+          cpus: "0.75"
         reservations:
-          memory: 128M
+          memory: 256M
 
   # ── Promtail (log collector) ──
   promtail:

@@ -1,3 +1,9 @@
+---
+description: Airflow standards — DockerOperator patterns, DAG conventions, orchestration-only principle
+globs: ["orchestration/**", "**/dags/**"]
+alwaysApply: false
+---
+
 # Airflow Standards
 
 ## Orchestration vs Processing

@@ -78,7 +78,7 @@ Accumulated best practices and lessons learned from building and debugging this 
 ### Image Rebuild After Content Changes
 - Changes to entrypoint scripts, Python code, or any file COPYed in a Dockerfile require a `docker build` to take effect.
 - The Airflow DockerOperator uses the **local Docker image** (by tag).
-- Checklist after script changes: rebuild with `make build-dlt`, `make build-dbt`, or `make build-soda`.
+- Checklist after script changes: rebuild with `just build-dlt`, `just build-dbt`, or `just build-soda`.
 
 ## dbt Patterns
 
@@ -134,16 +134,20 @@ Accumulated best practices and lessons learned from building and debugging this 
 ## Dependency Management
 
 ### uv + pyproject.toml (mandatory for all Dockerfiles)
-- **ALL** Dockerfiles MUST use `uv` and `pyproject.toml` for dependency management.
+- **ALL** Dockerfiles MUST use `uv` and `pyproject.toml` as **single source of truth** for dependencies.
 - **NEVER** use `pip install` directly in a Dockerfile — always declare dependencies in `pyproject.toml`.
+- **NEVER** hardcode dependency lists in Dockerfiles — read from `pyproject.toml` only.
+- **NEVER** keep `requirements.txt` alongside `pyproject.toml` — delete them.
 - Pattern:
   ```dockerfile
   COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
   ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_NO_DEV=1
   WORKDIR /app
-  COPY pyproject.toml .
-  RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-install-project
+  COPY <subproject>/pyproject.toml pyproject.toml
+  RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-install-project
   ```
+- Use `uv sync --no-install-project` (without `--frozen`) for sub-projects without their own `uv.lock`.
+- The runtime stage copies `.venv` with `ENV PATH="/app/.venv/bin:$PATH"` (not site-packages).
 
 ### Centralized Linter/Formatter Configuration
 - All linter/formatter config (ruff, mypy, pytest) MUST live in the **root** `pyproject.toml`.
@@ -193,13 +197,18 @@ ENV PATH="/app/.venv/bin:$PATH"
 - **No `uv lock` in Docker**: Lock file should be committed to git and copied into the image.
 - **slim-bookworm** base: Use Debian Bookworm for better compatibility.
 
-### Makefile Standards (Cross-Platform)
-- **SHELL := /bin/bash** at the top for consistent behavior.
-- **Never** use `>NUL` (Windows CMD) — always `>/dev/null 2>&1`.
-- **Never** use `echo.` (Windows CMD) — always `@echo ""`.
-- **Never** use `timeout /t` — always `sleep`.
-- make uses sh/bash even on Windows (via MSYS2/Git Bash).
-- Use `|| true` instead of `|| echo.` for error suppression.
+### justfile (Replaced Makefile)
+- **justfile** is the single automation entry point — Makefile is deleted.
+- `set shell := ["bash", "-cu"]` for cross-platform compatibility.
+- `set dotenv-load := true` loads `.env` automatically.
+- `just` built-in `os()` and `arch()` functions for platform detection.
+- No hardcoded paths — no `--context desktop-linux`, no absolute Git Bash paths.
+- `docker compose` works without context flag on all platforms (Docker Desktop WSL integration).
+
+### CI/CD (GitHub Actions)
+- CI runs **lint + format** (ruff via uv) and **unit tests** (pytest via uv) only.
+- No Docker builds, no dbt compile, no smoke tests in CI.
+- Uses `astral-sh/setup-uv@v5` for fast uv installation in CI.
 
 ## Common Pitfalls
 
@@ -215,8 +224,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 | `pip install` in Dockerfile | Legacy pattern, not consistent with uv | Use `pyproject.toml` + `uv sync` |
 | Large Docker images (>1GB) | No multi-stage build | Use multi-stage: builder + slim runtime |
 | Slow Docker builds | No cache mounts | Use `--mount=type=cache,target=/root/.cache/uv` |
-| `make` fails with `>NUL` error | Windows CMD syntax in Makefile | Replace with `>/dev/null 2>&1` |
-| Script changes not applied | Docker image not rebuilt | Run `make build-<service>` after changes |
+| Script changes not applied | Docker image not rebuilt | Run `just build-<service>` after changes |
+| Hardcoded deps in Dockerfile | Deps duplicated in Dockerfile and pyproject.toml | Use `uv sync --no-install-project` from pyproject.toml only |
+| `requirements.txt` alongside `pyproject.toml` | Stale/conflicting dependency sources | Delete `requirements.txt`, use pyproject.toml as single source |
 | Soda `checks for public_staging.X` fails | Schema prefix not needed when `schema:` set in config | Remove prefix, use bare table name |
 | GX `schema_name` deprecation warning | GX 1.x removed `schema_name` param | Use `search_path` in connection string |
 | DAG mounts `transformations/dbt` | Subdir doesn't exist; dbt files at `transformations/` | Mount `transformations/` to `/app` |

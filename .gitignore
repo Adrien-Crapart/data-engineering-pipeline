@@ -26,8 +26,6 @@ dbt_packages/
 dbt_modules/
 
 # Airflow
-orchestration/airflow/logs/
-orchestration/airflow/config/
 *.pid
 
 # IDE
@@ -35,6 +33,7 @@ orchestration/airflow/config/
 .idea/
 *.swp
 *.swo
+.cursor/settings.json
 
 # OS
 .DS_Store
@@ -45,6 +44,7 @@ Thumbs.db
 
 # Pytest
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 

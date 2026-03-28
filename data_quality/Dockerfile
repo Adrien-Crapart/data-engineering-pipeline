@@ -10,13 +10,7 @@ WORKDIR /app
 
 COPY data_quality/pyproject.toml pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project 2>/dev/null || \
-    uv pip install --system --no-cache \
-        "soda-core-postgres>=3.3.0" \
-        "great_expectations>=1.0.0" \
-        "minio>=7.2.0" \
-        "psycopg2-binary>=2.9.0" \
-        "pyyaml>=6.0"
+    uv sync --no-install-project
 
 FROM python:3.12-slim-bookworm
 
@@ -25,8 +19,8 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 

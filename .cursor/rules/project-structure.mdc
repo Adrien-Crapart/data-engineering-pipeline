@@ -1,3 +1,9 @@
+---
+description: Project structure standards — folder conventions, naming, README requirements
+globs: ["**/*"]
+alwaysApply: false
+---
+
 # Project Structure Standards
 
 ## Root-Level Folders

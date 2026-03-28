@@ -1,3 +1,9 @@
+---
+description: Testing standards — pytest conventions, coverage requirements, pre-merge checklist
+globs: ["tests/**", "**/*test*.py"]
+alwaysApply: false
+---
+
 # Testing Standards
 
 ## Mandatory Testing
@@ -10,7 +16,7 @@
 
 - Unit tests go in `tests/unit/test_<module_name>.py`.
 - Integration tests go in `tests/integration/test_<feature>.py`.
-- Tools that have their own test directories (e.g., `transformations/dbt/tests/`) keep tests there.
+- Tools that have their own test directories (e.g., `transformations/tests/`) keep tests there.
 - Airflow DAGs must have a parsing/validation test in `tests/unit/test_dags.py`.
 
 ## Test Coverage Requirements
@@ -22,7 +28,7 @@
 
 ## Pre-Merge Checklist
 
-1. Run `ruff check .` and `ruff format --check .` — no errors.
-2. Run `pytest tests/ -v --tb=short` — all tests pass.
-3. If Docker images changed, verify `docker compose build` succeeds.
-4. If dbt models changed, verify `dbt compile` succeeds.
+1. Run `just check` — no lint/format errors.
+2. Run `just test` — all tests pass.
+3. If Docker images changed, verify `just build-all` succeeds.
+4. If dbt models changed, verify `just dbt-test` succeeds.
