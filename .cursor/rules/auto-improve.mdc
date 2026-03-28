@@ -1,0 +1,70 @@
+---
+description: Meta-rule — self-improving knowledge base. After EVERY code change, debugging session, or user correction, the AI MUST update knowledge-base.mdc with lessons learned. This ensures iterative reinforcement of best practices.
+alwaysApply: true
+---
+
+# Auto-Improvement Protocol
+
+## Mandatory Knowledge Base Updates
+
+After **every** interaction that involves fixing a bug, debugging, making an architectural decision, or receiving a user correction, you **MUST**:
+
+1. **Check** if the lesson already exists in `knowledge-base.mdc`.
+2. **Add** the new pattern/pitfall/fix if it doesn't exist.
+3. **Update** existing entries if the fix has evolved.
+4. **Remove** outdated entries that no longer apply.
+
+## What to Capture
+
+| Trigger | Action |
+|---------|--------|
+| Bug fix | Add to Common Pitfalls table: symptom → root cause → fix |
+| User correction ("I prefer X over Y") | Add to Architecture Decisions or relevant section |
+| New tool/pattern adopted | Add a new section in knowledge-base.mdc |
+| Deprecated pattern discovered | Mark as deprecated, add migration path |
+| Docker/infra change | Update relevant Dockerfile or compose patterns |
+| Dependency change | Update Dependency Management section |
+
+## User Preferences to Enforce
+
+These are non-negotiable choices the user has made:
+
+- **justfile** over Makefile — never suggest or create a Makefile
+- **uv** over pip — never use pip in Dockerfiles or CI
+- **pyproject.toml** as single source of truth — never hardcode deps in Dockerfiles
+- **No requirements.txt** — delete if found, migrate to pyproject.toml
+- **No platform-specific scripts** (.bat, .cmd, .ps1) — see cross-platform-scripts.mdc
+- **Docker images pinned** — never use `:latest` in compose files
+- **Conventional commits** — always use feat/fix/docs/refactor/test/chore format
+- **French responses** — always respond in French to the user
+- **English code** — all code, comments, documentation, and commit messages in English
+
+## .mdc File Structure Requirements
+
+Every `.mdc` file in `.cursor/rules/` **MUST** have valid YAML frontmatter:
+
+```markdown
+---
+description: Clear one-line description of what this rule covers
+globs: ["pattern1", "pattern2"]   # File patterns that trigger this rule
+alwaysApply: false                # true only for universal rules
+---
+
+# Title
+Content...
+```
+
+- `description` is **mandatory** — Cursor uses it for context matching.
+- `globs` is required for file-specific rules (use `alwaysApply: true` for universal ones).
+- Rules without proper frontmatter are **silently ignored** by Cursor.
+
+## Self-Check Checklist
+
+Before ending any coding session, verify:
+
+- [ ] Knowledge base updated if new patterns/pitfalls discovered
+- [ ] No hardcoded dependencies in Dockerfiles
+- [ ] No requirements.txt files in the project
+- [ ] All .mdc files have valid YAML frontmatter
+- [ ] justfile is the only automation entry point (no Makefile)
+- [ ] CI uses uv, not pip

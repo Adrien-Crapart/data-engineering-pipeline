@@ -1,0 +1,62 @@
+---
+description: Data processing tool preferences and conventions
+globs: ["**/*.py", "analytics/**", "ingestion/**"]
+---
+
+# Data Processing Tools
+
+## Performance Hierarchy (fastest first)
+
+Always prefer tools in this order for data manipulation:
+
+1. **Polars** — LazyFrame API for all DataFrame operations (fastest single-node)
+2. **DuckDB SQL** — analytical queries, Parquet reads, cross-source joins
+3. **PyArrow** — I/O layer for Parquet, zero-copy interop between engines
+4. **Dask** — distributed processing when data exceeds single-node memory
+5. **Modin** — drop-in pandas replacement only when Polars migration is impractical
+6. **pandas** — avoid unless a library has no Polars/Arrow support
+
+## Polars Conventions
+
+- Always prefer `LazyFrame` over `DataFrame` for chained operations.
+- Use `.collect()` only at the end of a pipeline.
+- Prefer `pl.col()` expressions over index-based access.
+- Use `pl.scan_parquet()` for lazy Parquet reads.
+- Use `.sink_parquet()` for streaming writes to Parquet.
+- Never call `.to_pandas()` unless explicitly required by a third-party library.
+
+## DuckDB Conventions
+
+- Use `read_parquet()` for direct S3 Parquet queries (no data movement).
+- Configure S3 settings via `SET s3_endpoint`, `SET s3_access_key_id`, etc.
+- Attach PostgreSQL via `ATTACH ... AS pg (TYPE POSTGRES)` for cross-engine queries.
+- Prefer DuckDB SQL over Polars for complex aggregations with window functions.
+- Use `COPY ... TO ... (FORMAT PARQUET)` for exports.
+
+## PyArrow Conventions
+
+- Use `pyarrow.parquet` for reading/writing Parquet files directly.
+- Use `pyarrow.Table` as the interchange format between DuckDB and Polars.
+- Prefer `pa.RecordBatch` for streaming workloads.
+- Use `pyarrow.fs.S3FileSystem` for S3 access when not going through DuckDB.
+
+## Parquet Best Practices
+
+- Always use ZSTD compression for Parquet files.
+- Partition by date columns (year/month/day) for time-series data.
+- Use Hive-style partitioning (`year=YYYY/month=MM/day=DD`).
+- Keep individual Parquet files between 64 MB and 256 MB for optimal read performance.
+- Include `_dlt_load_id` and `_dlt_id` metadata columns for lineage.
+
+## Dask Conventions
+
+- Use `dask.dataframe.read_parquet()` for distributed Parquet reads.
+- Prefer `dask.dataframe` over `dask.bag` for structured data.
+- Always call `.compute()` as late as possible.
+- Set `scheduler="synchronous"` for debugging.
+
+## Modin Conventions
+
+- Only use when migrating legacy pandas code that cannot be rewritten in Polars.
+- Import as `import modin.pandas as pd` for drop-in replacement.
+- Set `MODIN_ENGINE=ray` or `MODIN_ENGINE=dask` via environment variable.

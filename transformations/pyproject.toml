@@ -1,0 +1,11 @@
+[project]
+name = "weather-pipeline-dbt"
+version = "1.0.0"
+description = "dbt transformation layer for the weather data pipeline (PostgreSQL)"
+requires-python = ">=3.12"
+
+dependencies = [
+    "dbt-postgres>=1.9.0",
+    "elementary-data[postgres]",
+    "minio>=7.2.0",
+]

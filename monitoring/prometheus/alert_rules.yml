@@ -1,58 +1,225 @@
 groups:
-  - name: pipeline_alerts
+  # ── Alertes Airflow (composants internes) ──
+  - name: airflow_alerts
     rules:
-      - alert: PostgresDown
-        expr: pg_up == 0
+      - alert: AirflowSchedulerDown
+        expr: absent(airflow_scheduler_heartbeat) or rate(airflow_scheduler_heartbeat[5m]) == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: scheduler
+        annotations:
+          summary: "Le planificateur Airflow ne repond plus"
+          description: "Le scheduler n'a pas emis de heartbeat depuis 5 minutes."
+
+      - alert: AirflowHighTaskFailureRate
+        expr: rate(airflow_ti_failures[15m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: worker
+        annotations:
+          summary: "Taux d'echec de taches eleve"
+          description: "Le taux d'echec est de {{ $value | printf \"%.2f\" }}/s sur les 15 dernieres minutes."
+
+      - alert: AirflowDAGImportErrors
+        expr: airflow_dag_processing_import_errors > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: scheduler
+        annotations:
+          summary: "Erreurs d'importation de DAGs"
+          description: "{{ $value }} DAGs ne peuvent pas etre chargees (erreur de syntaxe ou dependance manquante)."
+
+      - alert: AirflowExecutorSlotsExhausted
+        expr: airflow_executor_open_slots <= 2
+        for: 5m
+        labels:
+          severity: warning
+          component: executor
+        annotations:
+          summary: "Slots d'execution presque epuises"
+          description: "Seulement {{ $value }} slots disponibles. Les taches sont en file d'attente."
+
+      - alert: AirflowZombiesDetected
+        expr: increase(airflow_zombies_killed[1h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          component: scheduler
+        annotations:
+          summary: "Taches zombies detectees et supprimees"
+          description: "{{ $value }} taches zombies ont ete tuees dans la derniere heure."
+
+  # ── Alertes conteneurs Docker ──
+  - name: container_alerts
+    rules:
+      - alert: AirflowContainerDown
+        expr: docker_container_running{name=~"airflow-api-server|airflow-scheduler|airflow-worker|airflow-triggerer|airflow-dag-processor"} == 0
         for: 1m
         labels:
           severity: critical
+          component: container
         annotations:
-          summary: "PostgreSQL is down"
-          description: "PostgreSQL has been unreachable for more than 1 minute."
+          summary: "Conteneur Airflow critique arrete : {{ $labels.name }}"
+          description: "Le conteneur {{ $labels.name }} est arrete."
 
-      - alert: HighMemoryUsage
-        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "High memory usage detected"
-          description: "Memory usage is above 90% for 5 minutes."
-
-      - alert: HighDiskUsage
-        expr: (node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}) / node_filesystem_size_bytes{mountpoint="/"} > 0.85
-        for: 5m
-        labels:
-          severity: warning
-        annotations:
-          summary: "Disk usage above 85%"
-          description: "Root filesystem is {{ $value | humanizePercentage }} full."
-
-      - alert: ContainerOOMKill
-        expr: increase(container_oom_events_total[5m]) > 0
+      - alert: ContainerRestarted
+        expr: docker_container_restart_count{name=~"airflow.*|redis|minio|postgres"} > 0 and changes(docker_container_start_time_seconds{name=~"airflow.*|redis|minio|postgres"}[15m]) > 0
         for: 0m
         labels:
-          severity: critical
+          severity: warning
+          component: container
         annotations:
-          summary: "Container OOM kill detected"
-          description: "Container {{ $labels.name }} was killed due to OOM."
+          summary: "Conteneur {{ $labels.name }} a redemarre"
+          description: "Le conteneur {{ $labels.name }} a redemarre dans les 15 dernieres minutes ({{ $value }} restarts au total)."
 
-  - name: pipeline_sla
+      - alert: ContainerHighMemory
+        expr: (docker_container_memory_usage_bytes / docker_container_memory_limit_bytes) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: container
+        annotations:
+          summary: "Conteneur {{ $labels.name }} : memoire au-dessus de 85%"
+          description: "Le conteneur {{ $labels.name }} utilise plus de 85% de sa limite memoire. Risque d'OOM kill imminent."
+
+      - alert: ContainerHighCPU
+        expr: docker_container_cpu_usage_percent{name=~"airflow.*|redis|minio|postgres"} > 90
+        for: 5m
+        labels:
+          severity: warning
+          component: container
+        annotations:
+          summary: "Conteneur {{ $labels.name }} : CPU au-dessus de 90%"
+          description: "Le conteneur {{ $labels.name }} consomme {{ $value | printf \"%.1f\" }}% de CPU depuis 5 minutes."
+
+      - alert: InfrastructureServiceDown
+        expr: docker_container_running{name=~"redis|postgres|minio"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Service d'infrastructure critique arrete : {{ $labels.name }}"
+          description: "{{ $labels.name }} est arrete. La stack ne peut pas fonctionner sans ce service."
+
+      - alert: ContainerUnhealthy
+        expr: docker_container_health_status{name=~"airflow.*|redis|minio|postgres"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: container
+        annotations:
+          summary: "Conteneur {{ $labels.name }} : healthcheck echoue"
+          description: "Le conteneur {{ $labels.name }} echoue ses healthchecks depuis 2 minutes."
+
+  # ── Alertes pipeline data ──
+  - name: pipeline_alerts
     rules:
       - alert: PipelineDataStale
         expr: time() - push_time_seconds{job="pushgateway"} > 86400
         for: 10m
         labels:
           severity: warning
+          component: pipeline
         annotations:
-          summary: "Pipeline data may be stale"
-          description: "No metrics pushed to Pushgateway in the last 24 hours."
+          summary: "Donnees du pipeline potentiellement obsoletes"
+          description: "Aucune metrique poussee vers le Pushgateway depuis plus de 24 heures."
 
       - alert: PushgatewayDown
         expr: up{job="pushgateway"} == 0
         for: 2m
         labels:
           severity: warning
+          component: pipeline
         annotations:
-          summary: "Pushgateway is down"
-          description: "Pushgateway has been unreachable for more than 2 minutes."
+          summary: "Pushgateway inaccessible"
+          description: "Le Pushgateway ne repond plus depuis 2 minutes."
+
+  # ── Alertes machine hote (pannes physiques) ──
+  - name: host_alerts
+    rules:
+      - alert: HostDown
+        expr: up{job="node-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: host
+        annotations:
+          summary: "Machine hote inaccessible"
+          description: "Le node-exporter ne repond plus. Cause probable : coupure de courant, crash systeme."
+
+      - alert: HostHighCPU
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "CPU hote au-dessus de 85%"
+          description: "Utilisation CPU a {{ $value | printf \"%.1f\" }}%. Performances degradees."
+
+      - alert: HostHighMemory
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Memoire hote au-dessus de 85%"
+          description: "Utilisation RAM a {{ $value | printf \"%.1f\" }}%. Risque de swap et lenteurs."
+
+      - alert: HostDiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"})) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Espace disque au-dessus de 85%"
+          description: "Le disque {{ $labels.mountpoint }} est rempli a {{ $value | printf \"%.1f\" }}%."
+
+      - alert: HostNetworkDown
+        expr: rate(node_network_receive_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m]) == 0 and rate(node_network_transmit_bytes_total{device!~"lo|veth.*|docker.*|br-.*"}[5m]) == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: network
+        annotations:
+          summary: "Trafic reseau nul sur la machine hote"
+          description: "Aucun trafic reseau detecte depuis 3 minutes sur {{ $labels.device }}."
+
+  # ── Alertes stack monitoring ──
+  - name: monitoring_alerts
+    rules:
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Cible Prometheus {{ $labels.job }} inaccessible"
+          description: "La cible {{ $labels.instance }} (job: {{ $labels.job }}) ne repond plus depuis 2 minutes."
+
+      - alert: PrometheusTooManyRestarts
+        expr: changes(process_start_time_seconds{job="prometheus"}[1h]) > 2
+        for: 0m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Prometheus a redemarre plus de 2 fois en 1h"
+          description: "Instabilite de la stack de monitoring."
+
+      - alert: LokiDown
+        expr: absent(up{job="loki"}) or up{job="loki"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: monitoring
+        annotations:
+          summary: "Loki est inaccessible"
+          description: "Le service d'agregation de logs ne repond plus. Les logs ne sont plus collectes."

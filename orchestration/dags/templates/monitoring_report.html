@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background: #f4f5f7; }
+        .container { max-width: 640px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .header { background: linear-gradient(135deg, {{ header_color }}, {{ header_color_dark }}); color: #fff; padding: 24px 32px; }
+        .header h2 { margin: 0; font-size: 20px; }
+        .header .subtitle { margin-top: 4px; font-size: 13px; opacity: 0.85; }
+        .body { padding: 24px 32px; }
+        .section { margin-bottom: 20px; }
+        .section-title { font-size: 15px; font-weight: 600; color: #333; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 2px solid #eee; }
+        .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; color: #fff; }
+        .badge-ok { background: #28a745; }
+        .badge-warn { background: #ffc107; color: #333; }
+        .badge-error { background: #dc3545; }
+        .item { padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+        .item:last-child { border-bottom: none; }
+        .item code { background: #f4f5f7; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
+        .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+        .summary-card { background: #f8f9fa; border-radius: 6px; padding: 12px 16px; text-align: center; }
+        .summary-card .number { font-size: 28px; font-weight: 700; color: #333; }
+        .summary-card .label { font-size: 12px; color: #888; margin-top: 2px; }
+        .footer { padding: 16px 32px; background: #f8f9fa; font-size: 12px; color: #888; border-top: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>{{ icon }} {{ title }}</h2>
+            <div class="subtitle">Rapport de surveillance — Weather Data Pipeline</div>
+        </div>
+        <div class="body">
+            <div class="summary-grid">
+                <div class="summary-card">
+                    <div class="number">{{ critical_dags_checked }}</div>
+                    <div class="label">DAGs critiques surveillees</div>
+                </div>
+                <div class="summary-card">
+                    <div class="number" style="color: {{ '#dc3545' if total_issues > 0 else '#28a745' }}">{{ total_issues }}</div>
+                    <div class="label">Problemes detectes</div>
+                </div>
+            </div>
+
+            {% if paused_dags %}
+            <div class="section">
+                <div class="section-title"><span class="badge badge-error">CRITIQUE</span> DAGs critiques desactivees</div>
+                {% for dag in paused_dags %}
+                <div class="item"><code>{{ dag }}</code></div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if missed_dags %}
+            <div class="section">
+                <div class="section-title"><span class="badge badge-error">CRITIQUE</span> Executions manquantes (24h)</div>
+                {% for dag in missed_dags %}
+                <div class="item"><code>{{ dag }}</code> &mdash; aucune execution dans les dernieres 24h</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if stuck_runs %}
+            <div class="section">
+                <div class="section-title"><span class="badge badge-warn">ATTENTION</span> DAG Runs bloques</div>
+                {% for run in stuck_runs %}
+                <div class="item"><code>{{ run.dag_id }}</code> &mdash; en cours depuis {{ run.duration }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if anomalies %}
+            <div class="section">
+                <div class="section-title"><span class="badge badge-warn">ATTENTION</span> Anomalies de duree</div>
+                {% for a in anomalies %}
+                <div class="item"><code>{{ a.dag_id }}</code> &mdash; duree {{ a.actual_duration }} (moyenne: {{ a.avg_duration }})</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {% if not paused_dags and not missed_dags and not stuck_runs and not anomalies %}
+            <div class="section">
+                <div class="section-title"><span class="badge badge-ok">OK</span> Tout est operationnel</div>
+                <div class="item">Aucun probleme detecte sur les {{ critical_dags_checked }} DAGs critiques.</div>
+            </div>
+            {% endif %}
+        </div>
+        <div class="footer">
+            Notification automatique &mdash; Weather Pipeline Monitoring &bull; {{ timestamp }}
+        </div>
+    </div>
+</body>
+</html>

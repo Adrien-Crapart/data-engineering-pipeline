@@ -1,0 +1,531 @@
+{
+  "uid": "airflow-overview",
+  "title": "Airflow - Pipelines & DAGs",
+  "tags": ["airflow", "dags", "pipelines"],
+  "timezone": "Europe/Paris",
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m"],
+    "time_options": ["1h", "6h", "12h", "24h", "2d", "7d", "30d", "90d", "1y"]
+  },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 100,
+      "title": "Vue d'ensemble des DAGs",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "id": 1,
+      "title": "DAGs actives",
+      "description": "Nombre de DAGs activees (is_paused=false).",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) AS value FROM dag WHERE is_paused = false;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "green", "value": null }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 2,
+      "title": "DAGs inactives (en pause)",
+      "description": "Nombre de DAGs desactivees (is_paused=true).",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) AS value FROM dag WHERE is_paused = true;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "orange", "value": null }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "title": "Erreurs d'import",
+      "description": "Nombre de fichiers DAG contenant des erreurs de syntaxe Python ou des imports manquants.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) AS value FROM import_error;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "title": "Taches reussies",
+      "description": "Nombre de task instances terminees avec succes sur la periode selectionnee.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) AS value FROM task_instance WHERE state = 'success' AND start_date >= $__timeFrom()::timestamp AND start_date <= $__timeTo()::timestamp;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": { "steps": [{ "color": "green", "value": null }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "title": "Taches en echec",
+      "description": "Nombre de task instances en echec sur la periode selectionnee.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT COUNT(*) AS value FROM task_instance WHERE state = 'failed' AND start_date >= $__timeFrom()::timestamp AND start_date <= $__timeTo()::timestamp;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "area", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 6,
+      "title": "Zombies tues",
+      "description": "Taches 'zombie' detectees et supprimees par le scheduler sur la periode.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [{
+        "expr": "increase(airflow_zombies_killed[$__range])",
+        "legendFormat": "",
+        "instant": true,
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": { "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "colorMode": "background_solid", "graphMode": "none", "textMode": "auto", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 101,
+      "title": "Erreurs d'import et DAGs en erreur",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "title": "Erreurs d'import DAG (fichiers invalides)",
+      "description": "Liste des fichiers DAG qui ne peuvent pas etre charges par le scheduler.",
+      "type": "table",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT filename AS \"Fichier\", LEFT(stacktrace, 500) AS \"Message d'erreur\", timestamp AS \"Date\" FROM import_error ORDER BY timestamp DESC LIMIT 50;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": { "noValue": "Aucune erreur d'import" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Fichier" }, "properties": [{ "id": "custom.width", "value": 300 }] },
+          { "matcher": { "id": "byName", "options": "Date" }, "properties": [{ "id": "custom.width", "value": 180 }] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } }
+    },
+
+    {
+      "id": 102,
+      "title": "Executions recentes des DAGs (DAG Runs)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+      "collapsed": false
+    },
+    {
+      "id": 20,
+      "title": "Derniers DAG Runs par statut",
+      "description": "Historique des executions de DAGs avec leur statut sur la periode selectionnee.",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT dr.dag_id AS \"DAG\", dr.run_id AS \"Run ID\", dr.state AS \"Statut\", dr.start_date AS \"Debut\", dr.end_date AS \"Fin\", EXTRACT(EPOCH FROM (COALESCE(dr.end_date, NOW()) - dr.start_date))::int AS \"Duree (s)\" FROM dag_run dr WHERE dr.start_date >= $__timeFrom()::timestamp AND dr.start_date <= $__timeTo()::timestamp ORDER BY dr.start_date DESC LIMIT 200;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": { "noValue": "Aucune execution" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "DAG" }, "properties": [{ "id": "custom.width", "value": 250 }] },
+          { "matcher": { "id": "byName", "options": "Statut" }, "properties": [
+            { "id": "custom.width", "value": 100 },
+            { "id": "mappings", "value": [
+              { "type": "value", "options": { "success": { "text": "SUCCES", "color": "green" }, "failed": { "text": "ECHEC", "color": "red" }, "running": { "text": "EN COURS", "color": "blue" }, "queued": { "text": "EN ATTENTE", "color": "orange" } } }
+            ]},
+            { "id": "custom.cellOptions", "value": { "type": "color-background" } }
+          ]},
+          { "matcher": { "id": "byName", "options": "Duree (s)" }, "properties": [{ "id": "unit", "value": "s" }, { "id": "custom.width", "value": 120 }] },
+          { "matcher": { "id": "byName", "options": "Debut" }, "properties": [{ "id": "custom.width", "value": 180 }] },
+          { "matcher": { "id": "byName", "options": "Fin" }, "properties": [{ "id": "custom.width", "value": 180 }] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": true, "countRows": true, "reducer": ["count"] } }
+    },
+
+    {
+      "id": 103,
+      "title": "Executions recentes des Tasks (Task Instances)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "collapsed": false
+    },
+    {
+      "id": 30,
+      "title": "Derniere Task Instances par statut",
+      "description": "Liste des dernieres task instances avec leur statut sur la periode selectionnee.",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT ti.dag_id AS \"DAG\", ti.task_id AS \"Tache\", ti.run_id AS \"Run ID\", ti.state AS \"Statut\", ti.start_date AS \"Debut\", ti.end_date AS \"Fin\", EXTRACT(EPOCH FROM (COALESCE(ti.end_date, NOW()) - ti.start_date))::int AS \"Duree (s)\", ti.try_number AS \"Tentative\" FROM task_instance ti WHERE ti.start_date IS NOT NULL AND ti.start_date >= $__timeFrom()::timestamp AND ti.start_date <= $__timeTo()::timestamp ORDER BY ti.start_date DESC LIMIT 200;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": { "noValue": "Aucune task instance" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "DAG" }, "properties": [{ "id": "custom.width", "value": 220 }] },
+          { "matcher": { "id": "byName", "options": "Tache" }, "properties": [{ "id": "custom.width", "value": 220 }] },
+          { "matcher": { "id": "byName", "options": "Statut" }, "properties": [
+            { "id": "custom.width", "value": 130 },
+            { "id": "mappings", "value": [
+              { "type": "value", "options": { "success": { "text": "SUCCES", "color": "green" }, "failed": { "text": "ECHEC", "color": "red" }, "running": { "text": "EN COURS", "color": "blue" }, "queued": { "text": "EN ATTENTE", "color": "orange" }, "up_for_retry": { "text": "RETRY", "color": "yellow" }, "upstream_failed": { "text": "AMONT ECHOUE", "color": "purple" }, "skipped": { "text": "IGNORE", "color": "semi-dark-blue" }, "up_for_reschedule": { "text": "REPLANIFIE", "color": "light-blue" } } }
+            ]},
+            { "id": "custom.cellOptions", "value": { "type": "color-background" } }
+          ]},
+          { "matcher": { "id": "byName", "options": "Duree (s)" }, "properties": [{ "id": "unit", "value": "s" }, { "id": "custom.width", "value": 100 }] },
+          { "matcher": { "id": "byName", "options": "Debut" }, "properties": [{ "id": "custom.width", "value": 170 }] },
+          { "matcher": { "id": "byName", "options": "Fin" }, "properties": [{ "id": "custom.width", "value": 170 }] },
+          { "matcher": { "id": "byName", "options": "Tentative" }, "properties": [{ "id": "custom.width", "value": 80 }] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": true, "countRows": true, "reducer": ["count"] } }
+    },
+
+    {
+      "id": 32,
+      "title": "Taux de succes/echec par DAG",
+      "description": "Ratio succes vs echecs pour chaque DAG sur la periode selectionnee.",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 33 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT dr.dag_id AS \"DAG\", COUNT(*) FILTER (WHERE dr.state = 'success') AS \"Succes\", COUNT(*) FILTER (WHERE dr.state = 'failed') AS \"Echecs\", COUNT(*) AS \"Total\", ROUND(100.0 * COUNT(*) FILTER (WHERE dr.state = 'success') / NULLIF(COUNT(*), 0), 1) AS \"Taux succes (%)\" FROM dag_run dr WHERE dr.start_date >= $__timeFrom()::timestamp AND dr.start_date <= $__timeTo()::timestamp GROUP BY dr.dag_id ORDER BY \"Echecs\" DESC, \"DAG\";",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": { "noValue": "Aucune donnee" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "DAG" }, "properties": [{ "id": "custom.width", "value": 280 }] },
+          { "matcher": { "id": "byName", "options": "Taux succes (%)" }, "properties": [
+            { "id": "unit", "value": "percent" },
+            { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 50 }, { "color": "green", "value": 90 }] } },
+            { "id": "custom.cellOptions", "value": { "type": "color-background" } }
+          ]}
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "sortBy": [{ "displayName": "Echecs", "desc": true }], "footer": { "show": true, "countRows": true, "reducer": ["count"] } }
+    },
+
+    {
+      "id": 104,
+      "title": "Performance des DAGs (Durees d'execution)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
+      "collapsed": false
+    },
+    {
+      "id": 40,
+      "title": "Duree moyenne, min et max par DAG",
+      "description": "Statistiques de duree d'execution pour chaque DAG sur la periode selectionnee.",
+      "type": "table",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 43 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT dr.dag_id AS \"DAG\", COUNT(*) AS \"Nb runs\", ROUND(AVG(EXTRACT(EPOCH FROM (dr.end_date - dr.start_date)))::numeric, 1) AS \"Moyenne (s)\", ROUND(MIN(EXTRACT(EPOCH FROM (dr.end_date - dr.start_date)))::numeric, 1) AS \"Min (s)\", ROUND(MAX(EXTRACT(EPOCH FROM (dr.end_date - dr.start_date)))::numeric, 1) AS \"Max (s)\", ROUND(STDDEV(EXTRACT(EPOCH FROM (dr.end_date - dr.start_date)))::numeric, 1) AS \"Ecart-type (s)\" FROM dag_run dr WHERE dr.end_date IS NOT NULL AND dr.start_date >= $__timeFrom()::timestamp AND dr.start_date <= $__timeTo()::timestamp GROUP BY dr.dag_id ORDER BY \"Moyenne (s)\" DESC;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": { "noValue": "Aucune donnee" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "DAG" }, "properties": [{ "id": "custom.width", "value": 280 }] },
+          { "matcher": { "id": "byName", "options": "Moyenne (s)" }, "properties": [{ "id": "unit", "value": "s" }] },
+          { "matcher": { "id": "byName", "options": "Min (s)" }, "properties": [{ "id": "unit", "value": "s" }] },
+          { "matcher": { "id": "byName", "options": "Max (s)" }, "properties": [{ "id": "unit", "value": "s" }] },
+          { "matcher": { "id": "byName", "options": "Ecart-type (s)" }, "properties": [{ "id": "unit", "value": "s" }] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "sortBy": [{ "displayName": "Moyenne (s)", "desc": true }], "footer": { "show": true, "countRows": true, "reducer": ["count"] } }
+    },
+
+    {
+      "id": 105,
+      "title": "Timeline des executions (Visualisation Gantt)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 52 },
+      "collapsed": false
+    },
+    {
+      "id": 50,
+      "title": "Timeline des DAG Runs",
+      "description": "Visualise quand chaque DAG demarre et se termine.",
+      "type": "state-timeline",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 53 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT dr.start_date AS time, dr.dag_id AS metric, CASE dr.state WHEN 'success' THEN 1 WHEN 'running' THEN 2 WHEN 'failed' THEN 3 WHEN 'queued' THEN 4 ELSE 0 END AS value FROM dag_run dr WHERE dr.start_date >= $__timeFrom()::timestamp AND dr.start_date <= $__timeTo()::timestamp UNION ALL SELECT COALESCE(dr.end_date, NOW()) AS time, dr.dag_id AS metric, 0 AS value FROM dag_run dr WHERE dr.start_date >= $__timeFrom()::timestamp AND dr.start_date <= $__timeTo()::timestamp ORDER BY time;",
+        "format": "time_series",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "fillOpacity": 80, "lineWidth": 0 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "transparent", "value": null },
+              { "color": "green", "value": 1 },
+              { "color": "blue", "value": 2 },
+              { "color": "red", "value": 3 },
+              { "color": "orange", "value": 4 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": {
+              "0": { "text": " ", "color": "transparent" },
+              "1": { "text": "SUCCES", "color": "green" },
+              "2": { "text": "EN COURS", "color": "blue" },
+              "3": { "text": "ECHEC", "color": "red" },
+              "4": { "text": "EN ATTENTE", "color": "orange" }
+            }}
+          ]
+        }
+      },
+      "options": { "showValue": "auto", "alignValue": "center", "mergeValues": true, "rowHeight": 0.8 }
+    },
+
+    {
+      "id": 51,
+      "title": "DAG Runs en cours et paralleles",
+      "description": "Nombre de taches en cours d'execution et en attente.",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 63 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "airflow_executor_running_tasks", "legendFormat": "Taches en cours", "refId": "A" },
+        { "expr": "airflow_executor_queued_tasks", "legendFormat": "Taches en attente", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "showPoints": "never", "stacking": { "mode": "normal" } },
+          "noValue": "0"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Taches en cours" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Taches en attente" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 52,
+      "title": "Taux de succes/echecs des taches (evolution)",
+      "description": "Evolution du nombre de succes et d'echecs des taches dans le temps.",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 63 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(airflow_ti_successes[5m]) * 60", "legendFormat": "Succes / min", "refId": "A" },
+        { "expr": "rate(airflow_ti_failures[5m]) * 60", "legendFormat": "Echecs / min", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 30, "lineWidth": 2, "showPoints": "never" },
+          "noValue": "0"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Succes / min" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Echecs / min" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    {
+      "id": 106,
+      "title": "Slots et Pools (Gestion des ressources)",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 70 },
+      "collapsed": false
+    },
+    {
+      "id": 60,
+      "title": "Slots de l'executeur (Celery)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 71 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "airflow_executor_open_slots", "legendFormat": "Slots libres", "refId": "A" },
+        { "expr": "airflow_executor_queued_tasks", "legendFormat": "Taches en file", "refId": "B" },
+        { "expr": "airflow_executor_running_tasks", "legendFormat": "Taches actives", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 20, "lineWidth": 2, "showPoints": "never" },
+          "noValue": "0"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Slots libres" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Taches en file" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Taches actives" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 61,
+      "title": "Utilisation des Pools",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 71 },
+      "datasource": { "uid": "airflow-pg" },
+      "targets": [{
+        "rawSql": "SELECT pool AS \"Pool\", slots AS \"Slots total\", include_deferred AS \"Inclut deferred\" FROM slot_pool ORDER BY pool;",
+        "format": "table",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": { "noValue": "Aucun pool" }
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } }
+    },
+
+    {
+      "id": 62,
+      "title": "Pool - Slots en cours d'utilisation",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 79 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "airflow_pool_running_slots", "legendFormat": "En cours - {{ pool }}", "refId": "A" },
+        { "expr": "airflow_pool_queued_slots", "legendFormat": "En attente - {{ pool }}", "refId": "B" },
+        { "expr": "airflow_pool_open_slots", "legendFormat": "Libres - {{ pool }}", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" },
+          "noValue": "0"
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    {
+      "id": 107,
+      "title": "Scheduler et traitement des fichiers DAG",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 87 },
+      "collapsed": false
+    },
+    {
+      "id": 70,
+      "title": "Temps total de parsing des DAGs",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 88 },
+      "datasource": { "uid": "prometheus" },
+      "targets": [
+        { "expr": "airflow_dag_processing_total_parse_time", "legendFormat": "Temps de parsing total", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 15, "lineWidth": 2, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 30 }, { "color": "red", "value": 60 }] },
+          "noValue": "0"
+        }
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "id": 108,
+      "title": "Journaux d'erreurs Airflow",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 95 },
+      "collapsed": false
+    },
+    {
+      "id": 80,
+      "title": "Erreurs du Scheduler (imports, parsing, exceptions)",
+      "description": "Journaux d'erreurs du scheduler Airflow.",
+      "type": "logs",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 96 },
+      "datasource": { "uid": "loki" },
+      "targets": [
+        { "expr": "{job=\"docker\", container_name=\"airflow-scheduler\"} |~ \"(?i)(error|exception|traceback|warning|import|module|no module|syntaxerror|cannot)\"", "legendFormat": "", "refId": "A" }
+      ],
+      "options": {
+        "showTime": true, "showLabels": false, "wrapLogMessage": true,
+        "sortOrder": "Descending", "dedupStrategy": "none", "enableLogDetails": true
+      }
+    }
+  ],
+  "schemaVersion": 39
+}

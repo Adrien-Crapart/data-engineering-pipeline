@@ -7,3 +7,32 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: false
+    uid: prometheus
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    uid: loki
+    jsonData:
+      maxLines: 1000
+
+  - name: Airflow PostgreSQL
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    uid: airflow-pg
+    editable: false
+    user: airflow_user
+    jsonData:
+      database: airflow
+      user: airflow_user
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: airflow_password

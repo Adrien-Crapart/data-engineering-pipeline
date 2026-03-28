@@ -1,7 +1,6 @@
-# Soda Core checks for staging layer models.
-# These verify that cleaned data meets quality expectations.
+# Soda Core checks for staging layer (Silver).
 
-checks for public_staging.stg_weather_current:
+checks for stg_weather_current:
   - row_count > 0:
       name: Staging current weather has data
   - missing_count(city_name) = 0:
@@ -19,7 +18,7 @@ checks for public_staging.stg_weather_current:
       valid min: 0
       valid max: 100
 
-checks for public_staging.stg_weather_forecast:
+checks for stg_weather_forecast:
   - row_count > 0:
       name: Staging forecast has data
   - missing_count(city_name) = 0:

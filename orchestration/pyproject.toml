@@ -1,0 +1,15 @@
+[project]
+name = "weather-pipeline-airflow"
+version = "1.0.0"
+description = "Airflow orchestration dependencies for the weather data pipeline"
+requires-python = ">=3.12"
+
+dependencies = [
+    "apache-airflow-providers-celery>=3.10.0",
+    "apache-airflow-providers-fab>=3.0.0",
+    "apache-airflow-providers-amazon>=9.0.0",
+    "apache-airflow-providers-docker>=3.0.0",
+    "astronomer-cosmos[dbt-postgres]>=1.8.0",
+    "asyncpg>=0.30.0",
+    "prometheus_client>=0.20.0",
+]

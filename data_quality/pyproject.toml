@@ -1,9 +1,13 @@
 [project]
 name = "weather-pipeline-data-quality"
 version = "1.0.0"
-description = "Data quality dependencies for the weather data pipeline (Soda Core)"
+description = "Data quality dependencies: Soda Core + Great Expectations + S3 reports"
 requires-python = ">=3.12"
 
 dependencies = [
     "soda-core-postgres>=3.3.0",
+    "great_expectations>=1.0.0",
+    "minio>=7.2.0",
+    "psycopg2-binary>=2.9.0",
+    "pyyaml>=6.0",
 ]

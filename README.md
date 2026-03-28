@@ -1,17 +1,17 @@
 # Weather Data Engineering Pipeline
 
-![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python)
-![Airflow](https://img.shields.io/badge/Airflow-3.1-017cee?logo=apache-airflow)
-![dbt](https://img.shields.io/badge/dbt-1.10-ff694b?logo=dbt)
-![dlt](https://img.shields.io/badge/dlt-1.23-blue)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql)
-![MinIO](https://img.shields.io/badge/MinIO-S3_Data_Lake-red?logo=minio)
-![Prometheus](https://img.shields.io/badge/Prometheus-v3.10-orange?logo=prometheus)
-![Grafana](https://img.shields.io/badge/Grafana-12.4-F46800?logo=grafana)
-![Soda](https://img.shields.io/badge/Soda_Core-3.5-green)
-![DuckDB](https://img.shields.io/badge/DuckDB-1.x-yellow?logo=duckdb)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker)
-![Tests](https://img.shields.io/badge/tests-86_passing-brightgreen)
+Python
+Airflow
+dbt
+dlt
+PostgreSQL
+MinIO
+Prometheus
+Grafana
+Soda
+DuckDB
+Docker
+Tests
 
 > Production-grade weather data pipeline demonstrating modern Data Engineering best practices.
 > **API → Data Lake → Warehouse → Transformations → Quality → Observability → Catalog**
@@ -35,23 +35,33 @@ graph LR
     C -->|replay| I[Replay Pipeline]
 ```
 
+
+
 ## Technology Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Orchestration | Apache Airflow 3.1 | DAG scheduling and monitoring |
-| Ingestion | dlt (Data Load Tool) | API extraction with schema management |
-| Data Lake | MinIO (S3-compatible) | Immutable raw data archive |
-| Warehouse | PostgreSQL 16 | Layered schemas (raw, staging, mart) |
-| Transformation | dbt-core (DockerOperator) | SQL models: staging → mart |
-| Data Contracts | YAML + Python validator | Schema governance before storage |
-| Data Quality | Soda Core + Great Expectations + Elementary | Automated validation and anomaly detection |
-| Monitoring | Prometheus + Grafana | Pipeline metrics, dashboards, alerting |
-| Metadata Catalog | OpenMetadata | Data catalog, lineage, profiling |
-| Infrastructure | Docker Compose | Reproducible, versioned containers |
-| CI/CD | GitHub Actions | Lint, test, build, dbt compile |
+
+| Layer            | Technology                                  | Purpose                                    |
+| ---------------- | ------------------------------------------- | ------------------------------------------ |
+| Orchestration    | Apache Airflow 3.1                          | DAG scheduling and monitoring              |
+| Ingestion        | dlt (Data Load Tool)                        | API extraction with schema management      |
+| Data Lake        | MinIO (S3-compatible)                       | Immutable raw data archive                 |
+| Warehouse        | PostgreSQL 16                               | Layered schemas (raw, staging, mart)       |
+| Transformation   | dbt-core (DockerOperator)                   | SQL models: staging → mart                 |
+| Data Contracts   | YAML + Python validator                     | Schema governance before storage           |
+| Data Quality     | Soda Core + Great Expectations + Elementary | Automated validation and anomaly detection |
+| Monitoring       | Prometheus + Grafana                        | Pipeline metrics, dashboards, alerting     |
+| Metadata Catalog | OpenMetadata                                | Data catalog, lineage, profiling           |
+| Infrastructure   | Docker Compose                              | Reproducible, versioned containers         |
+| CI/CD            | GitHub Actions                              | Lint, format, unit tests                   |
+
 
 ## Quick Start
+
+### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- [just](https://github.com/casey/just) — `winget install Casey.Just` (Windows) / `brew install just` (macOS) / `cargo install just`
+- [uv](https://docs.astral.sh/uv/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
 ```bash
 # 1. Clone the repository
@@ -63,21 +73,23 @@ cp .env.example .env
 # Edit .env with your OpenWeather API key (free at openweathermap.org/api)
 
 # 3. Start the core platform
-make up
+just start
 
 # 4. (Optional) Start with OpenMetadata catalog
-make up-full
+just start-full
 ```
 
 ### Service URLs
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Airflow UI | http://localhost:8080 | airflow / airflow |
-| MinIO Console | http://localhost:9001 | minioadmin / minioadmin |
-| Grafana | http://localhost:3000 | admin / admin |
-| Prometheus | http://localhost:9090 | — |
-| OpenMetadata | http://localhost:8585 | — |
+
+| Service       | URL                                            | Credentials             |
+| ------------- | ---------------------------------------------- | ----------------------- |
+| Airflow UI    | [http://localhost:8080](http://localhost:8080) | airflow / airflow       |
+| MinIO Console | [http://localhost:9001](http://localhost:9001) | minioadmin / minioadmin |
+| Grafana       | [http://localhost:3000](http://localhost:3000) | admin / admin           |
+| Prometheus    | [http://localhost:9090](http://localhost:9090) | —                       |
+| OpenMetadata  | [http://localhost:8585](http://localhost:8585) | —                       |
+
 
 ## Project Structure
 
@@ -117,49 +129,84 @@ Re-run from any task via the Airflow UI **Clear** functionality.
 
 ## Key Design Decisions
 
-| Decision | Rationale |
-|----------|-----------|
-| One Dockerfile per tool | Decoupled dependencies and independent resource allocation |
-| Slim Airflow image | Providers only — Airflow orchestrates, never processes |
-| DockerOperator for all processing | Isolation, reproducibility, resource control |
-| Official OpenMetadata ingestion | Separate embedded Airflow, maintained upstream |
-| No replay DAG | Airflow Clear = re-run from any task natively |
-| Pinned Docker image versions | Reproducible builds, no surprise breakages |
-| MinIO as raw data lake | Immutable, replayable, auditable raw data archive |
+
+| Decision                          | Rationale                                                  |
+| --------------------------------- | ---------------------------------------------------------- |
+| One Dockerfile per tool           | Decoupled dependencies and independent resource allocation |
+| Slim Airflow image                | Providers only — Airflow orchestrates, never processes     |
+| DockerOperator for all processing | Isolation, reproducibility, resource control               |
+| Official OpenMetadata ingestion   | Separate embedded Airflow, maintained upstream             |
+| No replay DAG                     | Airflow Clear = re-run from any task natively              |
+| Pinned Docker image versions      | Reproducible builds, no surprise breakages                 |
+| MinIO as raw data lake            | Immutable, replayable, auditable raw data archive          |
+
 
 ## Data Layers
 
-| Schema | Layer | Description |
-|--------|-------|-------------|
-| `raw` | Raw | Unmodified API responses loaded by dlt |
-| `staging` | Staging | Cleaned, typed, renamed views |
-| `mart` | Mart | Business-ready analytical tables |
-| `elementary` | Observability | dbt model monitoring metadata |
+
+| Schema       | Layer         | Description                            |
+| ------------ | ------------- | -------------------------------------- |
+| `raw`        | Raw           | Unmodified API responses loaded by dlt |
+| `staging`    | Staging       | Cleaned, typed, renamed views          |
+| `mart`       | Mart          | Business-ready analytical tables       |
+| `elementary` | Observability | dbt model monitoring metadata          |
+
 
 ## Testing
 
-| Category | Tool | Count | Scope |
-|----------|------|-------|-------|
-| Unit Tests | pytest | 43+ | Config, pipeline, contracts, MinIO client, metrics, replay, DAGs |
-| dbt Tests | dbt test | 11 | Schema tests, data integrity, singular tests |
-| Data Quality | Soda Core | 19 | Row counts, nulls, ranges, duplicates |
-| Elementary | elementary | 7+ | Volume anomalies, schema changes |
-| CI/CD | GitHub Actions | 5 jobs | Lint, test, Docker build, dbt compile, contract validation |
+
+| Category     | Tool           | Count  | Scope                                                            |
+| ------------ | -------------- | ------ | ---------------------------------------------------------------- |
+| Unit Tests   | pytest         | 43+    | Config, pipeline, contracts, MinIO client, metrics, replay, DAGs |
+| dbt Tests    | dbt test       | 11     | Schema tests, data integrity, singular tests                     |
+| Data Quality | Soda Core      | 19     | Row counts, nulls, ranges, duplicates                            |
+| Elementary   | elementary     | 7+     | Volume anomalies, schema changes                                 |
+| CI/CD        | GitHub Actions | 2 jobs | Lint + format, unit tests                                        |
+
 
 ## Available Commands
 
+> Run `just` with no arguments to see all available recipes.
+
 ```bash
-make up          # Start core services (Airflow, PostgreSQL, MinIO, Prometheus, Grafana)
-make up-full     # Start all services including OpenMetadata
-make down        # Stop core services
-make down-full   # Stop all services including OpenMetadata
-make build       # Build Airflow image
-make build-images # Build all processing images (dlt, dbt, soda)
-make logs        # Follow service logs
-make psql        # Open PostgreSQL shell
-make test        # Run unit tests locally via uv
-make status      # Show service status
-make clean       # Full cleanup (containers + images + volumes)
+# Lifecycle
+just start            # Start all core services (ordered)
+just start-full       # Start all services including OpenMetadata
+just stop             # Stop core services and remove volumes
+just restart          # Restart core services
+just status           # Show service status
+just logs             # Follow service logs
+
+# Build
+just build-all        # Build all Docker images
+just build-airflow    # Build Airflow image
+just build-dlt        # Build DLT runner image
+just build-dbt        # Build dbt runner image
+just build-soda       # Build Soda runner image
+just rebuild          # Force-rebuild all images (no cache)
+
+# Dev Tools
+just psql             # Open psql shell on weather_db
+just airflow-shell    # Open bash in Airflow worker
+just dbt-run          # Run dbt models via Docker
+just dbt-test         # Run dbt tests via Docker
+just dbt-docs         # Generate dbt docs and upload to S3
+just dlt-run          # Run DLT ingestion via Docker
+just soda-check       # Run Soda checks via Docker
+just gx-check         # Run Great Expectations via Docker
+
+# Quality & Tests
+just lint             # Run ruff linter
+just format           # Auto-format Python code
+just check            # Run all checks (lint + format-check)
+just test             # Run unit tests
+just test-cov         # Run tests with coverage report
+
+# Ops
+just doctor           # Check environment health
+just urls             # Show service URLs
+just clean            # Remove all containers, volumes, images
+just prune            # Docker system prune
 ```
 
 ## Documentation
@@ -168,33 +215,6 @@ make clean       # Full cleanup (containers + images + volumes)
 - [Pipeline](docs/pipeline.md) — DAG details, task graph, error handling
 - [Data Lineage](docs/lineage.md) — End-to-end and column-level lineage
 - [ADR-001](docs/decisions/adr_001_architecture.md) — Architecture decisions
-
-## Git Workflow
-
-Feature branching strategy with conventional commits:
-
-```
-master
-├── feature/project-setup
-├── feature/openweather-ingestion
-├── feature/dbt-transformations
-├── feature/airflow-orchestration
-├── feature/data-quality
-├── feature/minio-data-lake
-├── feature/data-contracts
-├── feature/airflow-remote-logs
-├── feature/replay-system
-├── feature/monitoring
-├── feature/observability
-├── feature/openmetadata-catalog
-├── feature/ci-cd
-├── fix/cursor-rules
-├── fix/docker-versioning
-├── fix/folder-documentation
-├── fix/add-missing-tests
-├── fix/airflow-docker-operator
-└── fix/update-documentation
-```
 
 ---
 

@@ -1,0 +1,60 @@
+{{ define "email.subject" }}
+{{ if eq .Status "firing" }}[ALERTE] {{ .CommonLabels.alertname }} ({{ .Alerts.Firing | len }} actives)
+{{ else }}[RESOLUE] {{ .CommonLabels.alertname }}{{ end }}
+{{ end }}
+
+{{ define "email.html" }}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background: #f4f5f7; }
+    .container { max-width: 640px; margin: 20px auto; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .header { color: #fff; padding: 24px 32px; }
+    .header-firing { background: linear-gradient(135deg, #dc3545, #c82333); }
+    .header-resolved { background: linear-gradient(135deg, #28a745, #218838); }
+    .header h2 { margin: 0; font-size: 20px; }
+    .header .subtitle { margin-top: 4px; font-size: 13px; opacity: 0.85; }
+    .body { padding: 24px 32px; }
+    .alert-card { background: #f8f9fa; border-radius: 6px; padding: 16px; margin-bottom: 12px; border-left: 4px solid #dc3545; }
+    .alert-card.resolved { border-left-color: #28a745; }
+    .alert-card h3 { margin: 0 0 8px 0; font-size: 15px; color: #333; }
+    .label { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-right: 4px; margin-bottom: 4px; }
+    .label-critical { background: #f8d7da; color: #721c24; }
+    .label-warning { background: #fff3cd; color: #856404; }
+    .description { font-size: 13px; color: #555; margin-top: 8px; line-height: 1.5; }
+    .meta { font-size: 12px; color: #888; margin-top: 6px; }
+    .footer { padding: 16px 32px; background: #f8f9fa; font-size: 12px; color: #888; border-top: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header {{ if eq .Status "firing" }}header-firing{{ else }}header-resolved{{ end }}">
+      <h2>{{ if eq .Status "firing" }}Alerte Prometheus{{ else }}Alerte resolue{{ end }}</h2>
+      <div class="subtitle">{{ .CommonLabels.alertname }} — {{ if eq .Status "firing" }}{{ .Alerts.Firing | len }} alerte(s) active(s){{ else }}Toutes les alertes sont resolues{{ end }}</div>
+    </div>
+    <div class="body">
+      {{ range .Alerts }}
+      <div class="alert-card {{ if eq .Status "resolved" }}resolved{{ end }}">
+        <h3>{{ .Annotations.summary }}</h3>
+        <div>
+          {{ if .Labels.severity }}<span class="label label-{{ .Labels.severity }}">{{ .Labels.severity | toUpper }}</span>{{ end }}
+          {{ if .Labels.component }}<span class="label" style="background:#e2e3e5;color:#383d41;">{{ .Labels.component }}</span>{{ end }}
+          {{ if .Labels.name }}<span class="label" style="background:#d1ecf1;color:#0c5460;">{{ .Labels.name }}</span>{{ end }}
+        </div>
+        <div class="description">{{ .Annotations.description }}</div>
+        <div class="meta">
+          Debut: {{ .StartsAt.Format "02/01/2006 15:04:05" }}
+          {{ if eq .Status "resolved" }}| Fin: {{ .EndsAt.Format "02/01/2006 15:04:05" }}{{ end }}
+        </div>
+      </div>
+      {{ end }}
+    </div>
+    <div class="footer">
+      Notification automatique — Weather Pipeline Alertmanager
+    </div>
+  </div>
+</body>
+</html>
+{{ end }}

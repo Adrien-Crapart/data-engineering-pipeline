@@ -1,0 +1,76 @@
+---
+description: No platform-specific scripts allowed — all scripts must be cross-platform
+alwaysApply: true
+---
+
+# Cross-Platform Script Policy
+
+## Core Rule
+
+**ABSOLUTE PROHIBITION** on creating Windows-specific files in the source code:
+
+- NO `.bat` files
+- NO `.cmd` files
+- NO `.ps1` (PowerShell) files
+- NO scripts that only work on Windows
+
+## Allowed Script Types
+
+| Type | Status | Usage |
+|------|--------|-------|
+| `.bat` | FORBIDDEN | Never |
+| `.cmd` | FORBIDDEN | Never |
+| `.ps1` | FORBIDDEN | Never |
+| `justfile` | REQUIRED | Primary automation surface |
+| `Makefile` | FORBIDDEN | Replaced by justfile |
+| `.sh` | ALLOWED | Docker containers only |
+| `.py` | ALLOWED | Complex cross-platform scripts |
+
+## Recommended Approach
+
+### 1. Use justfile (Required)
+
+The `justfile` is the single automation entry point. It is cross-platform by design:
+
+```just
+set shell := ["bash", "-cu"]
+set dotenv-load := true
+
+start:
+    docker compose up -d
+
+test:
+    uv run --extra dev pytest tests/ -v
+```
+
+### 2. Shell Scripts for Docker Only
+
+`.sh` scripts are allowed **ONLY** for use **inside Docker containers**:
+
+```dockerfile
+COPY ./scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+```
+
+### 3. Python Scripts for Complex Operations
+
+When logic is too complex for a justfile recipe, use Python:
+
+```python
+#!/usr/bin/env python3
+import subprocess
+import platform
+
+def main():
+    print(f"Running on {platform.system()}")
+    subprocess.run(["docker", "compose", "up", "-d"])
+```
+
+## Checklist Before Creating a Script
+
+- [ ] Can the justfile do the same thing?
+- [ ] Can Python do the same thing?
+- [ ] Is it for a Docker container? -> `.sh`
+- [ ] Is it documented in the README?
+- [ ] Have I avoided `.bat`, `.cmd`, `.ps1`?
