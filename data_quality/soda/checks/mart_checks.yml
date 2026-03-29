@@ -12,6 +12,8 @@ checks for weather_daily_summary:
   - invalid_count(observation_count) = 0:
       name: Observation count is positive
       valid min: 1
+  - freshness(date_day) < 2d:
+      name: Daily summary is fresh
 
 checks for city_weather_metrics:
   - row_count > 0:

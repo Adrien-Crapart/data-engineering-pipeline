@@ -20,8 +20,17 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-ENTRYPOINT ["bash", "-c"]
+COPY ingestion/ /app/ingestion/
+COPY contracts/ /app/contracts/
+
+COPY ingestion/scripts/entrypoint.sh /app/scripts/entrypoint.sh
+RUN sed -i 's/\r$//' /app/scripts/entrypoint.sh && chmod +x /app/scripts/entrypoint.sh
+
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+CMD ["--pipeline", "openweather"]

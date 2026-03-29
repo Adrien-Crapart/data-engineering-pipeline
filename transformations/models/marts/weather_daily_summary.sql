@@ -1,5 +1,6 @@
 -- Mart model: daily weather summary per city.
 -- Combines current observations and forecast data into daily aggregates.
+-- Executed in DuckDB, materialized in PostgreSQL via ATTACH.
 
 with current_obs as (
     select
@@ -37,15 +38,15 @@ daily_summary as (
     select
         city_name,
         date_day,
-        round(avg(temperature_celsius)::numeric, 1)   as avg_temperature_celsius,
-        round(min(temperature_celsius)::numeric, 1)    as min_temperature_celsius,
-        round(max(temperature_celsius)::numeric, 1)    as max_temperature_celsius,
-        round(avg(feels_like_celsius)::numeric, 1)     as avg_feels_like_celsius,
-        round(avg(humidity_percent)::numeric, 1)        as avg_humidity_percent,
-        round(avg(pressure_hpa)::numeric, 1)            as avg_pressure_hpa,
-        round(avg(wind_speed_ms)::numeric, 2)           as avg_wind_speed_ms,
-        mode() within group (order by weather_condition) as dominant_weather_condition,
-        count(*)                                        as observation_count
+        round(avg(temperature_celsius), 1)   as avg_temperature_celsius,
+        round(min(temperature_celsius), 1)    as min_temperature_celsius,
+        round(max(temperature_celsius), 1)    as max_temperature_celsius,
+        round(avg(feels_like_celsius), 1)     as avg_feels_like_celsius,
+        round(avg(humidity_percent), 1)        as avg_humidity_percent,
+        round(avg(pressure_hpa), 1)            as avg_pressure_hpa,
+        round(avg(wind_speed_ms), 2)           as avg_wind_speed_ms,
+        mode(weather_condition)                as dominant_weather_condition,
+        count(*)                               as observation_count
     from combined
     group by city_name, date_day
 )

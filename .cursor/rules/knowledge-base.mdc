@@ -11,15 +11,20 @@ Accumulated best practices and lessons learned from building and debugging this 
 ## Architecture Decisions
 
 ### Medallion Architecture (Bronze → Silver → Gold)
-- **Bronze**: Raw data from API → JSON on MinIO S3 + `raw` schema in PostgreSQL via DLT.
-- **Silver**: `staging` schema — cleaned, typed, deduplicated views/tables via dbt.
-- **Gold**: `core` (business domain) + `mart` (API/BI-ready) schemas via dbt.
-- Quality gates (GX + Soda) between each layer transition.
+- **Bronze**: Raw data from API → Parquet on MinIO S3 via DLT filesystem destination. No PG `raw` schema.
+- **Silver**: `staging` — DuckDB views that read S3 Parquet via `read_parquet()`. Not materialized in PG.
+- **Gold**: `core` (business domain) + `mart` (API/BI-ready) schemas — materialized in PG via DuckDB ATTACH.
+- Quality gates (GX + Soda) run on core/mart tables in PG (not staging, which lives in DuckDB memory).
 
-### dbt with PostgreSQL (direct, not DuckDB)
-- `profiles.yml` uses `dbt-postgres` adapter directly — simpler, no DuckDB/ATTACH overhead.
-- Schema routing via `+schema:` in `dbt_project.yml` (staging, core, mart, analytic).
-- The `generate_schema_name` macro strips the default prefix, so schemas are clean.
+### dbt with DuckDB (read S3 Parquet + ATTACH PostgreSQL)
+- `profiles.yml` uses `dbt-duckdb` adapter with `:memory:` path.
+- DuckDB extensions: `httpfs` (S3 access) + `postgres` (PG ATTACH).
+- `settings:` configures S3 endpoint, credentials, `s3_url_style: path` for MinIO.
+- `attach:` connects to PostgreSQL datawarehouse via connection string + `alias: pg`.
+- Staging models use `read_parquet('s3://bucket/prefix/*.parquet')` — no PG raw schema needed.
+- Core/mart/analytic models use `+database: pg` in `dbt_project.yml` to write to PG via ATTACH.
+- `generate_schema_name` and `generate_database_name` macros handle DuckDB/PG routing.
+- **Key benefit**: DuckDB's columnar engine handles all computation; PG only stores final tables.
 
 ### S3 Raw Layer (Parquet) + PostgreSQL Staging
 - Raw data stored as versioned **Parquet** on MinIO S3 (`s3://weather-data-lake/raw/{source}/year=.../`).
@@ -31,6 +36,80 @@ Accumulated best practices and lessons learned from building and debugging this 
 ### Lakehouse Pattern
 - API → JSON on MinIO (raw/immutable) → DLT loads to PG `raw` → dbt transforms to `staging`/`core`/`mart`.
 - Reports (GX, Soda, dbt docs) are stored on S3 under `_reports/`.
+
+## Airflow Assets & Event-Driven Scheduling
+
+### Asset Producer/Consumer Pattern (Airflow 3.x)
+- `Asset(name="raw_weather_s3", uri="s3://...")` — first arg is `name`, second is `uri` (keyword).
+- **NEVER** pass URI as first positional arg and name as keyword — causes `multiple values for argument 'name'`.
+- Producer DAG: `@task(outlets=[my_asset])` on the final task emits the asset.
+- Consumer DAG: `schedule=[my_asset]` triggers when the asset is emitted.
+- Conditional asset emission: use `AirflowSkipException` in the task to skip emission based on params.
+- Shared asset definitions: centralize URIs in `plugins/constants.py` (e.g., `ASSET_RAW_WEATHER_S3`).
+
+### Airflow Variables & Connections (Runtime Config)
+- **NEVER** use `os.environ.get()` for pipeline config in DAGs — use Airflow Variables and Connections.
+- `{{ var.value.variable_name }}` — Jinja template resolved at runtime (works in DockerOperator args).
+- `{{ conn.connection_id.host }}` — access connection attributes via Jinja.
+- `{{ var.value.get('key', 'default') }}` — safe access with fallback.
+- Parse-time configs (ProfileConfig, ProjectConfig) still use env vars — Jinja not available at parse time.
+- Import/export via `orchestration/scripts/airflow_config.sh` (import/export connections, variables, pools).
+
+### DAG Params for Replay & Manual Triggers
+- Use `Param(default=..., type="...", description="...")` in the `@dag` decorator.
+- Common params: `version`, `force_download`, `run_quality_checks`, `send_notifications`, `trigger_transformation`.
+- Access in tasks: `context["params"].get("param_name", default_value)`.
+- Default values should be coherent for automated runs (e.g., `force_download=True`, `send_notifications=True`).
+
+### Custom Pools
+- Defined in `orchestration/config/pools.json`, imported via `airflow_config.sh import`.
+- `docker_pool` (3 slots): limits concurrent DockerOperator tasks.
+- `database_pool` (4 slots): limits concurrent PG connections (dbt, GX, Soda).
+- `api_pool` (2 slots): limits external API calls (OpenWeather, OpenMetadata).
+- Assign via `pool=POOL_DOCKER` in task definition (constants from `plugins/constants.py`).
+
+### Pendulum Timezone
+- All DAGs use `pendulum.datetime(2025, 1, 1, tz="Europe/Paris")` as `start_date`.
+- Centralized in `plugins/constants.py`: `TIMEZONE`, `TZ`, `DAG_START_DATE`.
+- **NEVER** use `datetime.datetime` for DAG scheduling — always `pendulum`.
+
+## Notification & Alerting Patterns
+
+### Multi-Channel Alert Routing
+- `CRITICAL` → Slack + Email (task failure)
+- `WARNING` → Slack only (task retry)
+- `INFO` → Email only (DAG success)
+- Router: `plugins/notifications/router.py` dispatches based on severity.
+- Callbacks: `on_failure_callback`, `on_retry_callback`, `on_success_callback` in `plugins/callbacks/handlers.py`.
+- Templates: Jinja2 templates in `plugins/templates/` for Slack Block Kit and HTML emails.
+- Slack: `SlackWebhookHook` with `slack_webhook` connection. Block Kit JSON templates.
+- Email: `SmtpHook` with HTML templates. Falls back to plain text if template fails.
+- Notifications can be disabled via DAG param `send_notifications=False`.
+
+## Config Management
+
+### Export/Import Script (`orchestration/scripts/airflow_config.sh`)
+- `import`: loads connections.yaml, variables.json, pools.json into Airflow.
+- `export`: saves current config to files before rebuilds.
+- Called by `airflow-init` in compose — replaces inline `airflow connections add` commands.
+- Falls back to `.example` files if actual config files don't exist.
+- Uses `--overwrite` for connections to always apply latest version.
+- Runs as root in init container: needs `PATH="/home/airflow/.local/bin:$PATH"` and `PYTHONPATH`.
+- **ALWAYS** run `sed -i 's/\r$//'` on the script before executing (Windows CRLF issue).
+
+### Sensitive Files (Git-ignored)
+- `orchestration/config/connections.yaml` — actual connection credentials.
+- `orchestration/config/variables.json` — actual variable values.
+- `.example` versions ARE committed (templates for first setup).
+
+## OpenMetadata Integration
+
+### OpenMetadata DAG (`openmetadata_ingestion_dag.py`)
+- Registers PostgreSQL, MinIO S3, dbt lineage as services in OpenMetadata via REST API.
+- Runs daily at 03:00 Europe/Paris (after all pipelines complete).
+- Uses OpenMetadata API v1 (`/api/v1/services/databaseServices`, etc.).
+- dbt lineage: reads manifest/catalog from S3 `_reports/dbt_docs/latest/`.
+- Schema filter: only ingests `staging`, `core`, `mart`, `analytic` schemas.
 
 ## Airflow DAG Patterns
 
@@ -61,11 +140,17 @@ Accumulated best practices and lessons learned from building and debugging this 
 - Quality gates (GX + Soda) run in parallel between layer transitions.
 - Transformation DAG uses Cosmos Docker operators (`DbtRunDockerOperator`, etc.).
 
-### Cosmos Docker Operators (not DbtTaskGroup)
-- `DbtTaskGroup` with `ExecutionMode.DOCKER` requires the worker to parse the dbt project.
-- For container-isolated execution, use individual Cosmos Docker operators directly:
-  `DbtDepsDockerOperator`, `DbtRunDockerOperator`, `DbtTestDockerOperator`.
-- Pass `project_dir`, `schema`, `conn_id`, `image`, `network_mode` etc. as kwargs.
+### Cosmos Docker Execution (DbtTaskGroup + ExecutionMode.DOCKER)
+- Airflow is an **orchestrator**, NOT a runner — dbt must execute inside Docker containers, not the worker.
+- Use `DbtTaskGroup` with `ExecutionMode.DOCKER` + `LoadMode.CUSTOM` for parsing.
+- `LoadMode.CUSTOM` avoids running `dbt ls` at parse time (no dbt binary needed on scheduler).
+- `ProjectConfig(dbt_project_path=...)` provides the project path for CUSTOM parsing on the scheduler.
+- `ExecutionConfig(execution_mode=ExecutionMode.DOCKER)` tells Cosmos to use Docker operators.
+- `ProfileConfig(profiles_yml_filepath=...)` required for Docker mode (not `ProfileMapping`).
+- `operator_args` must include `image`, `network_mode`, `docker_url`, `get_logs`, etc.
+- Mount `./transformations:/opt/airflow/dbt` on scheduler/dag-processor/worker for CUSTOM parsing.
+- The dbt container entrypoint strips `dbt` prefix: `if [ "$DBT_CMD" = "dbt" ]; then shift; fi`.
+- **NEVER** use `ExecutionMode.LOCAL` — it runs dbt inside the Airflow worker process.
 
 ## Docker Entrypoint Patterns
 
@@ -87,10 +172,12 @@ Accumulated best practices and lessons learned from building and debugging this 
 - `core` / `mart`: `table` — materialized for performance.
 - `analytic`: `table` — aggregated analysis.
 
-### Schema Routing (dbt-postgres)
-- Use `+schema: staging` / `+schema: core` / `+schema: mart` in `dbt_project.yml`.
-- `generate_schema_name` macro strips the default prefix.
-- **Never** use `meta: {'plugin': 'postgres'}` — that was for DuckDB attach.
+### Schema Routing (dbt-duckdb + ATTACH)
+- Use `+schema: staging` (DuckDB views), `+schema: core +database: pg`, `+schema: mart +database: pg` in `dbt_project.yml`.
+- `generate_schema_name` macro strips the default prefix — works for both DuckDB and PG.
+- `generate_database_name` macro handles `+database: pg` for ATTACH routing.
+- Staging models stay in DuckDB memory (no `+database:` override).
+- Core/mart/analytic models write to attached PostgreSQL via `+database: pg`.
 
 ### dbt Entrypoint Script
 - The dbt-runner image has `/app/scripts/entrypoint.sh` as ENTRYPOINT.
@@ -240,6 +327,18 @@ ENV PATH="/app/.venv/bin:$PATH"
 | Grafana crash loop: "Datasource provisioning error: data source not found" | Grafana 12.x no longer bundles PostgreSQL plugin | Set `GF_INSTALL_PLUGINS: grafana-postgresql-datasource` and use type `grafana-postgresql-datasource` |
 | `uv pip install --prefer-binary` fails | `--prefer-binary` is a pip flag, not a uv flag | Remove `--prefer-binary`; uv uses wheels by default |
 | `DbtDepsDockerOperator` ImportError | Cosmos 1.13.x has no `DbtDepsDockerOperator` | Use plain `DockerOperator` with `command="deps"` |
+| `CosmosLoadDbtException: MessageToJson()` | Cosmos LOCAL mode runs dbt in worker; protobuf version conflict | Use `ExecutionMode.DOCKER` instead of `LOCAL` |
+| `CosmosValueError: ProjectConfig.dbt_project_path is mutually exclusive` | Cannot set `dbt_project_path` in both `ProjectConfig` and `RenderConfig` | Use only `ProjectConfig.dbt_project_path` with `LoadMode.CUSTOM` |
+| `AttributeError: 'ProjectConfig' object has no attribute 'project_name'` | `ProjectConfig()` without `dbt_project_path` → `project_name` not set | Always provide `dbt_project_path` to `ProjectConfig` |
+| Cosmos not found in Airflow worker despite build | `uv pip install --system` installs in `/usr/python/` but Airflow uses `/home/airflow/.local/` | Use `uv pip install --python /home/airflow/.local/bin/python` |
+| `uv pip install --system -r pyproject.toml` installs nothing | `-r` flag expects requirements.txt format, not pyproject.toml | Generate requirements.txt from pyproject.toml via tomllib then install |
+| No data in `datawarehouse` schema | `POSTGRES_DB=weather_db` in `.env` | Change to `POSTGRES_DB=datawarehouse` with `datawarehouse_user` credentials |
+| SLA warnings at DAG parse time | `sla` / `sla_miss_callback` deprecated in Airflow 3.0 | Remove all SLA parameters from DAGs |
+| GX/Soda tasks produce no logs | `ENTRYPOINT ["bash", "-c"]` loses command args | Use `ENTRYPOINT ["python", "-u", "-m"]` |
+| Soda scan fails: datasource not found | Datasource name in `-d` flag doesn't match config YAML | Keep `-d datawarehouse` matching `data_source datawarehouse:` in config |
+| Scheduler heartbeat timeout (5 min) | Insufficient memory (2G) with Cosmos DAG parsing | Increase to 3G memory, 2 CPU, extend healthcheck intervals |
+| Prometheus restarts in loop | OOM with 1G limit + high cardinality metrics | Increase to 1.5G + enable `--storage.tsdb.wal-compression` |
+| Docker build snapshot error on Windows | Docker Desktop cache corruption | Run `docker builder prune -f` then `--no-cache` build |
 | `airflow command error: invalid choice: 'celery'` | `apache-airflow-providers-celery` not in `pyproject.toml` | Add `apache-airflow-providers-celery>=3.10.0` to deps |
 | Worker restarts with `celery` not found | Worker volumes override `x-airflow-common`, missing `config/` mount | Add `./orchestration/config:/opt/airflow/config` to worker volumes |
 | Triggerer always `unhealthy` | `airflow jobs check` takes >10s due to imports | Set healthcheck `timeout: 30s`, `interval: 60s` |
@@ -248,6 +347,133 @@ ENV PATH="/app/.venv/bin:$PATH"
 | Config in env vars vs airflow.cfg | Environment variables override cfg; hard to maintain | Use `airflow.cfg` for static config, env vars only for secrets/deployment-specific values |
 | `RuntimeError: Direct database access via the ORM is not allowed in Airflow 3.0` | Tasks in Airflow 3.x run in isolated processes; `@provide_session` and ORM access forbidden | Rewrite tasks to use Airflow REST API (`/api/v2/`) with JWT auth instead of ORM |
 | `500 Server Error` on `/auth/token` when 4+ tasks call it in parallel | Airflow API server struggles with concurrent auth requests | Get token once in a dedicated task, pass as XCom to downstream tasks |
+| `bash\r: No such file or directory` in Docker | Windows CRLF line endings in shell scripts | Add `RUN sed -i 's/\r$//' /path/to/script.sh` in Dockerfile |
+| Bind mount `/app` overwrites `.venv` | dbt Dockerfile puts `.venv` at `/app/.venv`, bind mount replaces it | Use `UV_PROJECT_ENVIRONMENT=/opt/venv` to install venv outside `/app` |
+| Bind mount overwrites entrypoint script | ENTRYPOINT at `/app/scripts/entrypoint.sh` replaced by mount | Copy entrypoint to `/entrypoint.sh` (outside bind mount path) |
+| `No module named 'psycopg2'` in DLT container | `dlt[filesystem,parquet]` doesn't include postgres driver | Add `dlt[postgres]` and `psycopg2-binary` to ingestion pyproject.toml |
+| `No module named 'distutils'` in Soda container | Python 3.12 removed distutils; Soda still imports it | Add `setuptools>=70.0.0` to data_quality pyproject.toml |
+| `sqlalchemy is not installed` in GX container | GX needs SQLAlchemy but it's not a direct dependency of `great_expectations` | Add `sqlalchemy>=2.0.0` to data_quality pyproject.toml |
+| DLT `weather__0__main` column not found in dbt | DLT creates child tables for arrays, not inline columns | Join parent table with child table (e.g., `weather_current__weather`) using `_dlt_parent_id` |
+| Logs don't stream from Docker containers | Python output buffering in Docker | Set `PYTHONUNBUFFERED=1` and use `python -u` in entrypoint |
+| DLT image has no application code | Dockerfile only installs deps, code provided via bind mounts | `COPY ingestion/ /app/ingestion/` and `COPY contracts/ /app/contracts/` in Dockerfile |
+| No pipeline selection in DLT CLI | Only one hardcoded pipeline | Create `ingestion/cli.py` with `--pipeline` flag and registry pattern |
+| `Asset.__init__() got multiple values for 'name'` | First positional arg is `name`, not `uri` in Airflow 3.x | Use `Asset(name="x", uri="s3://...")` with keyword args |
+| `airflow db check` timeout in init container | Each check loads full Airflow module (~10s); 30 retries exhausts time | Use Python socket check for PG instead of `airflow db check` |
+| `ModuleNotFoundError: No module named 'airflow'` in init script | Init runs as root, Airflow installed in `/home/airflow/.local/` | Set `PATH` and `PYTHONPATH` to include `/home/airflow/.local/` |
+| `set: pipefail: invalid option name` in Docker | Windows CRLF line endings in shell scripts | Add `sed -i 's/\r$//' /path/to/script.sh` before executing |
+| `mode() within group` fails in DuckDB | PostgreSQL ordered-set aggregate syntax not supported | Use `mode(column)` — DuckDB's native aggregate |
+| `::numeric` cast fails in DuckDB | PostgreSQL-specific cast syntax | Use `CAST(x AS DECIMAL)` or just `round()` without cast |
+| GX/Soda checks fail on staging tables | Staging is DuckDB views (not in PG) after dbt-duckdb migration | Check core/mart tables instead (they're in PG via ATTACH) |
+| DLT raw data not in PG `raw` schema | DLT filesystem destination writes to S3, not PG | dbt-duckdb reads S3 directly via `read_parquet()` — no PG raw needed |
+| `mem_limit` Jinja not rendered | `mem_limit` is NOT a template field in DockerOperator | Use Python constants (e.g. `DEFAULT_DLT_MEM`) instead of `{{ var.value }}` |
+| `image` Jinja not rendered | `image` is NOT a template field in DockerOperator | Use Python constants (e.g. `DEFAULT_SODA_IMAGE`) instead of `{{ var.value }}` |
+| `'mart' does not match any enabled nodes` in dbt | dbt `--select` uses folder names, folder is `marts` (plural) | Use `--select marts` (not `mart`) to match folder name |
+| `"memory"."staging" does not exist` in dbt build | dbt-duckdb staging tables are ephemeral in-memory; not available in separate sessions | Include `staging` in same dbt run: `run --select staging core marts analytic` |
+| OM ingestion pipeline 400: `airflowConfig must not be null` | OpenMetadata API requires `airflowConfig` field when creating pipelines | Add `"airflowConfig": {"pausePipeline": false, "concurrency": 1, ...}` |
+| OM ingestion container `unhealthy` | Healthcheck uses `/api/v1/health` but embedded Airflow 3.x uses `/api/v2/version` | Change healthcheck to `curl -sf http://localhost:8080/api/v2/version` |
+| OM deploy/trigger pipeline fails | OM `AirflowRESTClient` uses Airflow 2.x API; embedded Airflow is 3.x with JWT | Trigger DAGs directly in OM Airflow via `/auth/token` + `/api/v2/dags/` |
+
+## Ingestion CLI Architecture
+
+### Pipeline Selection Pattern
+- `ingestion/cli.py` is the single entry point for all ingestion pipelines.
+- New pipelines are registered in the `PIPELINES` dict: `{"openweather": "ingestion.pipelines.openweather_pipeline"}`.
+- Each pipeline module must expose `run_pipeline(config=None)`.
+- CLI supports `--pipeline`, `--cities`, `--full-refresh` flags.
+- Environment variable `INGESTION_PIPELINE` can set default pipeline.
+- Entrypoint: `python -u -m ingestion.cli --pipeline openweather`.
+
+### Docker Entrypoint Pattern (DLT)
+- `/app/scripts/entrypoint.sh` waits for PostgreSQL + MinIO, then calls CLI.
+- Uses socket-based health checks (Python `socket.connect`) not curl/pg_isready.
+- CMD default: `["--pipeline", "openweather"]`.
+
+### Docker Entrypoint Pattern (dbt)
+- `/entrypoint.sh` (outside `/app` to survive bind mounts).
+- Handles both `run --select staging` (direct) and `dbt run --select staging` (Cosmos).
+- Strips `dbt` prefix if present: `if [ "$DBT_CMD" = "dbt" ]; then shift; fi`.
+- Auto-adds `--profiles-dir .` unless already present in args.
+- Exports `MINIO_ENDPOINT_HOST` by stripping `http://` from `MINIO_ENDPOINT` for DuckDB httpfs.
+- Uses `UV_PROJECT_ENVIRONMENT=/opt/venv` to survive bind mounts at `/app`.
+
+## Report Versioning on S3
+
+All reports use timestamped paths + a `latest/` symlink:
+```
+_reports/{tool}/{YYYY}/{MM}/{DD}/{HHMMSS}/{name}.{json,html}
+_reports/{tool}/latest/{name}.{json,html}
+```
+Tools: `dbt_docs`, `great_expectations`, `soda`.
+
+### Database Routing (datawarehouse)
+- **Target database**: `datawarehouse` (not `weather_db`).
+- Owner role: `datawarehouse_user` / `datawarehouse_password` (created by init scripts).
+- `POSTGRES_DB=datawarehouse` in `.env` — all pipelines (DLT, dbt, GX, Soda) read from this.
+- The `airflow` database remains separate for Airflow metadata (`AIRFLOW_DB_NAME=airflow`).
+
+### S3 Raw Data Layout (DLT filesystem destination)
+- DLT stores normalized tables as Parquet at `raw/{pipeline}/data/{table_name}/{load_id}.{file_id}.parquet`.
+- Example: `raw/openweather/data/weather_current/1234567890.0.parquet`.
+- DLT metadata tables also on S3: `_dlt_loads`, `_dlt_pipeline_state`, `_dlt_version`.
+- dbt staging models use `read_parquet('s3://{bucket}/raw/openweather/data/{table}/*.parquet')`.
+- Legacy manual store: `raw/{pipeline}/{YYYY-MM-DD}/{ts}/{source}_{city}.parquet` (via `minio_client`).
+
+### DockerOperator Template Fields
+- **Template fields** (Jinja rendered at runtime): `command`, `environment`, `container_name`, `env_file`.
+- **NOT template fields** (passed literally): `image`, `mem_limit`, `network_mode`, `mounts`, `pool`.
+- For non-template fields, use Python constants from `plugins.constants` module.
+- Mount `data_quality/` into `/app/data_quality` for GX/Soda containers.
+
+### dbt-duckdb In-Memory Session Constraints
+- Staging models are `+materialized: table` in DuckDB `:memory:` — ephemeral per session.
+- Core/mart/analytic models depend on staging → must run in the **same** dbt session.
+- `dbt run --select staging core marts analytic` ensures all layers built in one session.
+- The transformation DAG includes staging rebuild because DuckDB in-memory is not persistent.
+- `--select` values must match dbt_project.yml folder names (e.g. `marts` not `mart`).
+
+### OpenMetadata Integration
+- OM 1.12.3 uses `AirflowRESTClient` pointing to `openmetadata-ingestion:8080`.
+- OM ingestion container bundles its own Airflow 3.x with `LocalExecutor`.
+- Healthcheck: `curl -sf http://localhost:8080/api/v2/version` (not `/api/v1/health`).
+- Container needs 2G+ memory and 1 CPU for stable Airflow operation.
+- Ingestion pipelines require `airflowConfig` field in creation payload.
+- OM's `AirflowRESTClient` has Airflow 2.x/3.x compat issues for deploy/trigger.
+- Workaround: trigger OM's internal DAGs directly via JWT auth on its Airflow API.
+
+### Cosmos Integration (DOCKER execution + dbt-duckdb)
+- `DbtTaskGroup` with `ExecutionMode.DOCKER` — dbt runs in isolated Docker containers.
+- `astronomer-cosmos[dbt-postgres,dbt-duckdb]>=1.8.0` in Airflow image (for DAG parsing only).
+- `ProfileConfig(profiles_yml_filepath="/opt/airflow/dbt/profiles.yml")` — must point to actual file.
+- `ProjectConfig(dbt_project_path="/opt/airflow/dbt")` — for CUSTOM parser on scheduler.
+- `RenderConfig(load_method=LoadMode.CUSTOM, select=["path:models/staging"])` — no dbt binary needed.
+- `ExecutionConfig(execution_mode=ExecutionMode.DOCKER)` — Container execution.
+- `operator_args={"image": DBT_IMAGE, "network_mode": ..., "get_logs": True, ...}`.
+- Mount `./transformations:/opt/airflow/dbt` on ALL Airflow services for DAG parsing.
+- `ProjectConfig.dbt_project_path` is MUTUALLY EXCLUSIVE with `RenderConfig.dbt_project_path`.
+- Use `ProjectConfig.dbt_project_path` (old interface) when `LoadMode.CUSTOM` is needed.
+- dbt-duckdb image needs `MINIO_ENDPOINT` env var; entrypoint strips `http://` to set `MINIO_ENDPOINT_HOST`.
+
+### SLA Removal (Airflow 3.x)
+- `sla` parameter and `sla_miss_callback` are removed in Airflow 3.0.
+- Use Deadline Alerts in Airflow 3.1+ as replacement.
+- Do NOT set `sla=timedelta(...)` on tasks — it triggers parse-time warnings.
+
+### Data Quality Docker Entrypoint
+- Use `ENTRYPOINT ["python", "-u", "-m"]` instead of `ENTRYPOINT ["bash", "-c"]`.
+- With `bash -c`, DockerOperator command is passed as a string to bash, which can lose args.
+- With `python -u -m`, DockerOperator command is the module path + args directly.
+- Always mount `data_quality/` into `/app/data_quality` for config file freshness.
+- Soda datasource name must match the `data_source` key in configuration YAML files.
+
+### Scheduler Heartbeat Tuning
+- Default scheduler memory (2G) may be insufficient with Cosmos DAG parsing overhead.
+- Increase to 3G+ with `cpus: "2.00"` for reliable heartbeats.
+- Healthcheck intervals: `interval: 60s`, `timeout: 30s`, `start_period: 60s`.
+
+### Prometheus Stability
+- Enable WAL compression: `--storage.tsdb.wal-compression` to reduce disk I/O.
+- Increase memory to 1536M+ with 768M reservation for stable operation.
+- Healthcheck with `start_period: 30s` to avoid false failures during startup.
 
 ## Update Protocol
 

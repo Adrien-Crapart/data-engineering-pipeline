@@ -1,19 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Handle both "run --select staging" (direct) and "dbt run --select staging" (Cosmos)
 DBT_CMD="${1:-run}"
 shift || true
-DBT_ARGS="${*:---profiles-dir .}"
+
+if [ "$DBT_CMD" = "dbt" ]; then
+    DBT_CMD="${1:-run}"
+    shift || true
+fi
+
+DBT_ARGS="${*}"
 DBT_PROJECT_DIR="${DBT_PROJECT_DIR:-/app}"
 EXIT_CODE=0
 
 cd "$DBT_PROJECT_DIR"
 
+# DuckDB httpfs needs the host:port without scheme
+MINIO_RAW="${MINIO_ENDPOINT:-http://minio:9000}"
+export MINIO_ENDPOINT_HOST="${MINIO_RAW#http://}"
+MINIO_ENDPOINT_HOST="${MINIO_ENDPOINT_HOST#https://}"
+export MINIO_ENDPOINT_HOST
+
 echo "=== dbt entrypoint ==="
-echo "  command:     $DBT_CMD"
-echo "  args:        $DBT_ARGS"
-echo "  project dir: $DBT_PROJECT_DIR"
-echo "  profiles:    $DBT_PROJECT_DIR/profiles.yml"
+echo "  command:       $DBT_CMD"
+echo "  args:          $DBT_ARGS"
+echo "  project dir:   $DBT_PROJECT_DIR"
+echo "  profiles:      $DBT_PROJECT_DIR/profiles.yml"
+echo "  minio host:    $MINIO_ENDPOINT_HOST"
 echo ""
 
 wait_for_postgres() {
@@ -36,22 +50,31 @@ wait_for_postgres() {
 
 wait_for_postgres || true
 
+has_profiles_dir() {
+    echo "$DBT_ARGS" | grep -q "\-\-profiles-dir"
+}
+
+PROFILES_FLAG=""
+if ! has_profiles_dir; then
+    PROFILES_FLAG="--profiles-dir ."
+fi
+
 case "$DBT_CMD" in
     deps)
         echo "--- dbt deps ---"
-        dbt deps --profiles-dir . $DBT_ARGS || EXIT_CODE=$?
+        dbt deps $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
     run)
         echo "--- dbt run ---"
-        dbt run --profiles-dir . $DBT_ARGS || EXIT_CODE=$?
+        dbt run $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
     test)
         echo "--- dbt test ---"
-        dbt test --profiles-dir . $DBT_ARGS || EXIT_CODE=$?
+        dbt test $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
     docs)
         echo "--- dbt docs generate ---"
-        dbt docs generate --profiles-dir . $DBT_ARGS || EXIT_CODE=$?
+        dbt docs generate $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         if [ $EXIT_CODE -eq 0 ]; then
             echo "--- uploading docs to S3 ---"
             python /app/scripts/upload_docs.py || echo "  WARNING: docs upload failed"
@@ -59,15 +82,15 @@ case "$DBT_CMD" in
         ;;
     build)
         echo "--- dbt build (deps + run + test) ---"
-        dbt deps --profiles-dir .
-        dbt run --profiles-dir . $DBT_ARGS || EXIT_CODE=$?
+        dbt deps $PROFILES_FLAG
+        dbt run $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         if [ $EXIT_CODE -eq 0 ]; then
-            dbt test --profiles-dir . $DBT_ARGS || EXIT_CODE=$?
+            dbt test $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         fi
         ;;
     *)
         echo "--- dbt $DBT_CMD ---"
-        dbt "$DBT_CMD" --profiles-dir . $DBT_ARGS || EXIT_CODE=$?
+        dbt "$DBT_CMD" $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
 esac
 

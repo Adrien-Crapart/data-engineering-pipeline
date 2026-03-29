@@ -20,8 +20,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-ENTRYPOINT ["bash", "-c"]
+COPY data_quality/ /app/data_quality/
+
+ENTRYPOINT ["python", "-u", "-m"]

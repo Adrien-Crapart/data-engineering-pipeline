@@ -35,8 +35,10 @@ x-airflow-common: &airflow-common
   volumes:
     - ./orchestration/dags:/opt/airflow/dags
     - ./orchestration/plugins:/opt/airflow/plugins
+    - ./orchestration/scripts:/opt/airflow/scripts
     - ./monitoring:/opt/airflow/monitoring
     - ./orchestration/config:/opt/airflow/config
+    - ./transformations:/opt/airflow/dbt
 
 name: data-engineering-pipeline
 
@@ -54,9 +56,9 @@ services:
       - |
         mkdir -v -p /opt/airflow/{logs,dags,plugins}
         /entrypoint airflow version
-        airflow connections add minio_s3 \
-          --conn-type aws \
-          --conn-extra '{"endpoint_url": "http://minio:9000", "aws_access_key_id": "minioadmin", "aws_secret_access_key": "minioadmin", "region_name": "us-east-1"}' || true
+        sed -i 's/\r$//' /opt/airflow/scripts/airflow_config.sh 2>/dev/null || true
+        chmod +x /opt/airflow/scripts/airflow_config.sh 2>/dev/null || true
+        bash /opt/airflow/scripts/airflow_config.sh import
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_MIGRATE: "true"
@@ -101,18 +103,18 @@ services:
     command: scheduler
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
-      interval: 30s
-      timeout: 10s
+      interval: 60s
+      timeout: 30s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     restart: always
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: "1.50"
+          memory: 3G
+          cpus: "2.00"
         reservations:
-          memory: 1G
+          memory: 1536M
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -143,14 +145,19 @@ services:
     <<: *airflow-common
     container_name: airflow-worker
     command: celery worker
+    user: "50000:0"
+    group_add:
+      - "1001"
     environment:
       <<: *airflow-common-env
       DUMB_INIT_SETSID: "0"
     volumes:
       - ./orchestration/dags:/opt/airflow/dags
       - ./orchestration/plugins:/opt/airflow/plugins
+      - ./orchestration/scripts:/opt/airflow/scripts
       - ./orchestration/config:/opt/airflow/config
       - ./monitoring:/opt/airflow/monitoring
+      - ./transformations:/opt/airflow/dbt
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD-SHELL", 'celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}" || celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"']

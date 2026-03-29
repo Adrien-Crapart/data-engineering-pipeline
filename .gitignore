@@ -27,6 +27,8 @@ dbt_modules/
 
 # Airflow
 *.pid
+orchestration/config/connections.yaml
+orchestration/config/variables.json
 
 # IDE
 .vscode/

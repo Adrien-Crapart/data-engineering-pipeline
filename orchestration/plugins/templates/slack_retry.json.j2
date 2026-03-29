@@ -1,0 +1,32 @@
+[
+  {
+    "type": "header",
+    "text": {
+      "type": "plain_text",
+      "text": "{{ emoji }} Task Retry",
+      "emoji": true
+    }
+  },
+  {
+    "type": "section",
+    "fields": [
+      { "type": "mrkdwn", "text": "*DAG:*\n`{{ dag_id }}`" },
+      { "type": "mrkdwn", "text": "*Task:*\n`{{ task_id }}`" },
+      { "type": "mrkdwn", "text": "*Attempt:*\n{{ try_number }} / {{ max_tries }}" },
+      { "type": "mrkdwn", "text": "*Run ID:*\n`{{ run_id }}`" }
+    ]
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*Reason:*\n```{{ error[:300] if error else 'Transient failure — retrying' }}```"
+    }
+  },
+  {
+    "type": "context",
+    "elements": [
+      { "type": "mrkdwn", "text": "Weather Data Pipeline | Retry {{ try_number }}/{{ max_tries }}" }
+    ]
+  }
+]

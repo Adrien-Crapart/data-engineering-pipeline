@@ -155,76 +155,73 @@ rebuild: ensure-network
 #  DEV TOOLS
 # ============================================================
 
-# Open psql shell on weather_db
+# Open psql shell on datawarehouse
 psql:
-    {{ dc_base }} -f {{ f_warehouse }} exec postgres psql -U airflow -d weather_db
+    {{ dc_base }} -f {{ f_warehouse }} exec postgres psql -U datawarehouse_user -d datawarehouse
 
 # Open bash in Airflow worker
 airflow-shell:
     {{ dc_base }} -f {{ f_warehouse }} -f {{ f_lake }} -f {{ f_airflow }} exec airflow-worker bash
 
 # Run dbt models via Docker
-dbt-run: ensure-network
+dbt-run *ARGS: ensure-network
     docker run --rm \
         --network {{ network_name }} \
-        -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
-        -e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
-        -e MINIO_ENDPOINT_HOST=minio:9000 \
-        -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-        weather-pipeline-dbt:1.0.0 run
+        -v "$(pwd)/transformations:/app" \
+        --env-file {{ env_file }} \
+        weather-pipeline-dbt:1.0.0 run {{ ARGS }}
 
 # Run dbt tests via Docker
-dbt-test: ensure-network
+dbt-test *ARGS: ensure-network
     docker run --rm \
         --network {{ network_name }} \
-        -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
-        -e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
-        -e MINIO_ENDPOINT_HOST=minio:9000 \
-        -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-        weather-pipeline-dbt:1.0.0 test
+        -v "$(pwd)/transformations:/app" \
+        --env-file {{ env_file }} \
+        weather-pipeline-dbt:1.0.0 test {{ ARGS }}
 
-# Run DLT ingestion via Docker
-dlt-run: ensure-network
-    docker run --rm \
+# Run DLT ingestion via Docker (default: openweather pipeline)
+dlt-run *ARGS: ensure-network
+    docker run --rm -it \
         --network {{ network_name }} \
         --env-file {{ env_file }} \
-        weather-pipeline-dlt:1.0.0
+        -e PYTHONUNBUFFERED=1 \
+        weather-pipeline-dlt:1.0.0 {{ ARGS }}
+
+# Run a specific ingestion pipeline with custom cities
+dlt-run-openweather *ARGS: ensure-network
+    docker run --rm -it \
+        --network {{ network_name }} \
+        --env-file {{ env_file }} \
+        -e PYTHONUNBUFFERED=1 \
+        weather-pipeline-dlt:1.0.0 --pipeline openweather {{ ARGS }}
 
 # Generate dbt docs and upload to S3
 dbt-docs: ensure-network
     docker run --rm \
         --network {{ network_name }} \
         -v "$(pwd)/transformations:/app" \
-        -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
-        -e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
-        -e MINIO_ENDPOINT=minio:9000 \
-        -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-        -e MINIO_BUCKET_NAME=weather-data-lake \
+        --env-file {{ env_file }} \
         weather-pipeline-dbt:1.0.0 docs
 
-# Run Soda checks via Docker (staging)
-soda-check: ensure-network
+# Run Soda checks via Docker (with S3 report upload)
+soda-check layer="staging": ensure-network
     docker run --rm \
         --network {{ network_name }} \
+        --env-file {{ env_file }} \
+        -e MINIO_ENDPOINT=http://minio:9000 \
         -v "$(pwd)/data_quality:/app/data_quality" \
-        -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
-        -e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
         weather-pipeline-soda:1.0.0 \
-        "soda scan -d weather_db -c /app/data_quality/soda/configuration.yml /app/data_quality/soda/checks/staging_checks.yml"
+        data_quality.soda.run_scan --layer {{ layer }}
 
-# Run Great Expectations validations via Docker
-gx-check: ensure-network
+# Run Great Expectations validations via Docker (with S3 report upload)
+gx-check layer="all": ensure-network
     docker run --rm \
         --network {{ network_name }} \
+        --env-file {{ env_file }} \
+        -e MINIO_ENDPOINT=http://minio:9000 \
         -v "$(pwd)/data_quality:/app/data_quality" \
-        -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 \
-        -e POSTGRES_DB=weather_db -e POSTGRES_USER=airflow -e POSTGRES_PASSWORD=airflow \
-        -e MINIO_ENDPOINT=minio:9000 \
-        -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-        -e MINIO_BUCKET_NAME=weather-data-lake \
-        -e PYTHONPATH=/app \
         weather-pipeline-soda:1.0.0 \
-        "cd /app && python -m data_quality.expectations.run_validations --layer all"
+        data_quality.expectations.run_validations --layer {{ layer }}
 
 # ============================================================
 #  QUALITY

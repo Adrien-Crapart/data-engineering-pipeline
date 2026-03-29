@@ -1,0 +1,17 @@
+{
+  "docker_pool": {
+    "slots": 3,
+    "description": "Limits concurrent Docker containers spawned by DockerOperator",
+    "include_deferred": false
+  },
+  "database_pool": {
+    "slots": 4,
+    "description": "Limits concurrent tasks hitting PostgreSQL (dbt, GX, Soda)",
+    "include_deferred": false
+  },
+  "api_pool": {
+    "slots": 2,
+    "description": "Limits concurrent external API calls (OpenWeather, etc.)",
+    "include_deferred": false
+  }
+}

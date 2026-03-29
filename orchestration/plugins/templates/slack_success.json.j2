@@ -1,0 +1,25 @@
+[
+  {
+    "type": "header",
+    "text": {
+      "type": "plain_text",
+      "text": "{{ emoji }} Pipeline Completed",
+      "emoji": true
+    }
+  },
+  {
+    "type": "section",
+    "fields": [
+      { "type": "mrkdwn", "text": "*DAG:*\n`{{ dag_id }}`" },
+      { "type": "mrkdwn", "text": "*Run ID:*\n`{{ run_id }}`" },
+      { "type": "mrkdwn", "text": "*Duration:*\n{{ duration }}s" },
+      { "type": "mrkdwn", "text": "*Logical Date:*\n{{ logical_date }}" }
+    ]
+  },
+  {
+    "type": "context",
+    "elements": [
+      { "type": "mrkdwn", "text": "Weather Data Pipeline | All tasks succeeded" }
+    ]
+  }
+]

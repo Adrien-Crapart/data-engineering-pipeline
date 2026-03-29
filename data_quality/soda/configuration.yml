@@ -1,8 +1,8 @@
-data_source weather_db:
+data_source datawarehouse:
   type: postgres
   host: ${POSTGRES_HOST}
   port: ${POSTGRES_PORT}
   username: ${POSTGRES_USER}
   password: ${POSTGRES_PASSWORD}
   database: ${POSTGRES_DB}
-  schema: staging
+  schema: core

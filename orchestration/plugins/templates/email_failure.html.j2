@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif;background:#f1f5f9;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:32px auto;">
+    <tr>
+      <td style="background:#dc2626;padding:20px 24px;border-radius:8px 8px 0 0;">
+        <h1 style="margin:0;color:#fff;font-size:20px;font-weight:600;">
+          &#x1F6A8; Pipeline Failure — {{ severity | upper }}
+        </h1>
+      </td>
+    </tr>
+    <tr>
+      <td style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
+          <tr>
+            <td style="padding:6px 0;color:#64748b;font-size:13px;width:120px;">DAG</td>
+            <td style="padding:6px 0;font-weight:600;font-size:14px;">{{ dag_id }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#64748b;font-size:13px;">Task</td>
+            <td style="padding:6px 0;font-weight:600;font-size:14px;">{{ task_id }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#64748b;font-size:13px;">Run ID</td>
+            <td style="padding:6px 0;font-size:13px;font-family:monospace;">{{ run_id }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#64748b;font-size:13px;">Logical Date</td>
+            <td style="padding:6px 0;font-size:13px;">{{ logical_date }}</td>
+          </tr>
+          <tr>
+            <td style="padding:6px 0;color:#64748b;font-size:13px;">Attempt</td>
+            <td style="padding:6px 0;font-size:13px;">{{ try_number }} / {{ max_tries }}</td>
+          </tr>
+        </table>
+        <div style="background:#fef2f2;border-left:4px solid #dc2626;padding:12px 16px;border-radius:4px;margin-bottom:16px;">
+          <p style="margin:0 0 4px;font-weight:600;color:#991b1b;font-size:13px;">Error</p>
+          <pre style="margin:0;white-space:pre-wrap;font-size:12px;color:#450a0a;font-family:monospace;">{{ error[:1000] if error else 'No error details available' }}</pre>
+        </div>
+        {% if log_url %}
+        <a href="{{ log_url }}"
+           style="display:inline-block;padding:10px 20px;background:#dc2626;color:#fff;text-decoration:none;border-radius:6px;font-size:13px;font-weight:600;">
+          View Task Logs
+        </a>
+        {% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:12px 24px;color:#94a3b8;font-size:11px;text-align:center;border-radius:0 0 8px 8px;background:#f8fafc;">
+        Weather Data Pipeline &mdash; Airflow Alerting System
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

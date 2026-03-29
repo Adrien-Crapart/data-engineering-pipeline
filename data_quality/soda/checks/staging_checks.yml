@@ -1,8 +1,9 @@
-# Soda Core checks for staging layer (Silver).
+# Soda Core checks for core layer (dbt-duckdb writes to PG via ATTACH).
+# Staging views live in DuckDB (not PG), so we check the core fact/dim tables instead.
 
-checks for stg_weather_current:
+checks for fct_weather_observation:
   - row_count > 0:
-      name: Staging current weather has data
+      name: Core fact table has data
   - missing_count(city_name) = 0:
       name: No missing city names
   - missing_count(temperature_celsius) = 0:
@@ -17,13 +18,13 @@ checks for stg_weather_current:
       name: Humidity within valid range
       valid min: 0
       valid max: 100
+  - freshness(measured_at) < 2d:
+      name: Data is fresh (within 2 days)
 
-checks for stg_weather_forecast:
+checks for dim_city:
   - row_count > 0:
-      name: Staging forecast has data
+      name: Dimension city has data
   - missing_count(city_name) = 0:
-      name: No missing city names in forecast
-  - missing_count(temperature_celsius) = 0:
-      name: No missing forecast temperatures
-  - missing_count(forecast_at) = 0:
-      name: No missing forecast timestamps
+      name: No missing city names in dim
+  - duplicate_count(city_name) = 0:
+      name: No duplicate cities

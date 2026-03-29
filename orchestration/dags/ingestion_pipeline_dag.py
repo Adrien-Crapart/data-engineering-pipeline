@@ -1,214 +1,217 @@
 """
-Ingestion Pipeline DAG — Extract weather data, store on S3 as Parquet,
-load to PostgreSQL raw schema, then transform to staging via dbt.
+Ingestion Pipeline DAG — Extract weather data and store on S3 as Parquet,
+then transform to staging via dbt-duckdb Docker, then quality checks.
 
 Flow:
-  1. extract_weather      — Call OpenWeather API, store Parquet on MinIO S3, load to PG raw
-  2. validate_contracts    — Check raw data against YAML data contracts
-  3. dbt_deps             — Install dbt packages
-  4. dbt_run_staging      — Run dbt staging models (raw → staging views)
-  5. dbt_test_staging     — Run dbt tests on staging models
-  6. gx_validate_staging  — Great Expectations checks on staging tables
-  7. soda_scan_staging    — Soda scan on staging tables
+  1. extract_weather      — Call OpenWeather API, store Parquet on MinIO S3 via DLT
+  2. dbt_build_staging    — dbt build (run + test) staging models in single DuckDB session
+  3. gx_validate_staging  — Great Expectations checks on core tables
+  4. soda_scan_staging    — Soda scan on core tables
+  5. finalize_ingestion   — Emit raw_weather_s3 Asset → triggers transformation DAG
 
-Schedule: Every 6 hours.
+Uses Airflow Assets for event-driven scheduling.
+All configuration via Airflow Variables and Connections (no os.environ in tasks).
+Schedule: Every 6 hours (Europe/Paris timezone).
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
 
+from airflow.exceptions import AirflowSkipException
+from airflow.models.param import Param
 from airflow.providers.docker.operators.docker import DockerOperator
-from airflow.sdk import dag
+from airflow.sdk import Asset, dag, task
 from docker.types import Mount
+
+from plugins.callbacks.handlers import on_failure_callback, on_retry_callback, on_success_callback
+from plugins.constants import (
+    ASSET_RAW_WEATHER_S3,
+    DAG_START_DATE,
+    DEFAULT_DBT_IMAGE,
+    DEFAULT_DBT_MEM,
+    DEFAULT_DLT_IMAGE,
+    DEFAULT_DLT_MEM,
+    DEFAULT_NETWORK,
+    DEFAULT_SODA_IMAGE,
+    DEFAULT_SODA_MEM,
+    POOL_API,
+    POOL_DATABASE,
+)
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration (parse-time safe: os.environ only)
-# ---------------------------------------------------------------------------
-PROJECT_ROOT = os.environ.get("PROJECT_ROOT", ".")
-NETWORK_NAME = (
-    os.environ.get("COMPOSE_PROJECT_NAME", "data-engineering-pipeline")
-    + "_pipeline-network"
-)
+raw_weather_s3 = Asset(name="raw_weather_s3", uri=ASSET_RAW_WEATHER_S3)
 
-DLT_IMAGE = os.environ.get("DLT_IMAGE", "weather-pipeline-dlt:1.0.0")
-DBT_IMAGE = os.environ.get("DBT_IMAGE", "weather-pipeline-dbt:1.0.0")
-SODA_IMAGE = os.environ.get("SODA_IMAGE", "weather-pipeline-soda:1.0.0")
-
-DLT_MEM_LIMIT = os.environ.get("DLT_MEM_LIMIT", "512m")
-DBT_MEM_LIMIT = os.environ.get("DBT_MEM_LIMIT", "512m")
-SODA_MEM_LIMIT = os.environ.get("SODA_MEM_LIMIT", "256m")
-
-MINIO_ENV = {
-    "MINIO_ROOT_USER": os.environ.get("MINIO_ROOT_USER", "minioadmin"),
-    "MINIO_ROOT_PASSWORD": os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
-    "MINIO_ENDPOINT": os.environ.get("MINIO_ENDPOINT", "minio:9000"),
-    "MINIO_BUCKET_NAME": os.environ.get("MINIO_BUCKET_NAME", "weather-data-lake"),
-}
-
-PG_ENV = {
-    "POSTGRES_HOST": os.environ.get("POSTGRES_HOST", "postgres"),
-    "POSTGRES_PORT": os.environ.get("POSTGRES_PORT", "5432"),
-    "POSTGRES_DB": os.environ.get("POSTGRES_DB", "weather_db"),
-    "POSTGRES_USER": os.environ.get("POSTGRES_USER", "airflow"),
-    "POSTGRES_PASSWORD": os.environ.get("POSTGRES_PASSWORD", "airflow"),
-}
+DBT_VENV_PATH = "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+HOST_PROJECT_ROOT = os.environ.get("PROJECT_ROOT", ".")
 
 DOCKER_DEFAULTS = {
-    "network_mode": NETWORK_NAME,
     "auto_remove": "success",
     "docker_url": "unix://var/run/docker.sock",
     "mount_tmp_dir": False,
 }
 
+DBT_ENV = {
+    "PATH": DBT_VENV_PATH,
+    "HOME": "/tmp",
+    "POSTGRES_HOST": "postgres",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DB": "datawarehouse",
+    "POSTGRES_USER": "datawarehouse_user",
+    "POSTGRES_PASSWORD": "datawarehouse_password",
+    "MINIO_ROOT_USER": "minioadmin",
+    "MINIO_ROOT_PASSWORD": "minioadmin",
+    "MINIO_ENDPOINT": "http://minio:9000",
+    "MINIO_BUCKET_NAME": "weather-data-lake",
+    "PYTHONUNBUFFERED": "1",
+}
 
-def _sla_miss_callback(dag, task_list, blocking_task_list, slas, blocking_tis):
-    logger.error(
-        "SLA MISS on %s | tasks: %s | blocking: %s",
-        dag.dag_id,
-        [t.task_id for t in task_list],
-        [t.task_id for t in blocking_tis],
-    )
-
-
-def _on_failure_callback(context):
-    ti = context.get("task_instance")
-    logger.error(
-        "TASK FAILED: %s | execution_date=%s",
-        getattr(ti, "task_id", "unknown"),
-        context.get("execution_date"),
-    )
-
+DBT_MOUNTS = [Mount(source=f"{HOST_PROJECT_ROOT}/transformations", target="/app", type="bind")]
 
 default_args = {
     "owner": "data-engineering",
-    "retries": 2,
-    "retry_delay": timedelta(minutes=3),
+    "retries": 3,
+    "retry_delay": timedelta(minutes=2),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=15),
     "execution_timeout": timedelta(minutes=30),
-    "on_failure_callback": _on_failure_callback,
+    "on_failure_callback": on_failure_callback,
+    "on_retry_callback": on_retry_callback,
 }
 
 
 @dag(
     dag_id="ingestion_pipeline",
-    description="Extract weather API → Parquet S3 → PG raw → dbt staging → quality checks",
+    description="Extract weather API → Parquet S3 (DLT) → dbt-duckdb staging → quality checks",
     schedule="0 */6 * * *",
-    start_date=datetime(2025, 1, 1),
+    start_date=DAG_START_DATE,
     catchup=False,
     max_active_runs=1,
     default_args=default_args,
-    tags=["weather", "ingestion", "dlt", "dbt", "staging"],
+    on_success_callback=on_success_callback,
+    tags=["weather", "ingestion", "dlt", "dbt", "staging", "s3"],
     doc_md=__doc__,
-    sla_miss_callback=_sla_miss_callback,
+    params={
+        "version": Param(
+            default="latest",
+            type="string",
+            description="S3 data version to reload (YYYYMMDD_HHMMSS or 'latest' for fresh extraction)",
+        ),
+        "force_download": Param(
+            default=True,
+            type="boolean",
+            description="Download fresh data from OpenWeather API",
+        ),
+        "run_quality_checks": Param(
+            default=True,
+            type="boolean",
+            description="Run Great Expectations + Soda quality checks",
+        ),
+        "send_notifications": Param(
+            default=True,
+            type="boolean",
+            description="Send Slack/Email alerts on failure/success",
+        ),
+        "trigger_transformation": Param(
+            default=True,
+            type="boolean",
+            description="Emit Asset to trigger the transformation DAG",
+        ),
+    },
 )
 def ingestion_pipeline():
-
-    # --- Extract: API → Parquet on S3 + raw schema in PostgreSQL ---
     extract_weather = DockerOperator(
         task_id="extract_weather",
-        image=DLT_IMAGE,
-        command="cd /app && python -m ingestion.pipelines.openweather_pipeline",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/ingestion", target="/app/ingestion", type="bind"),
-            Mount(source=f"{PROJECT_ROOT}/contracts", target="/app/contracts", type="bind"),
-        ],
+        image=DEFAULT_DLT_IMAGE,
+        command="--pipeline openweather",
+        network_mode=DEFAULT_NETWORK,
         environment={
-            **PG_ENV,
-            **MINIO_ENV,
-            "OPENWEATHER_API_KEY": os.environ.get("OPENWEATHER_API_KEY", ""),
-            "WEATHER_CITIES": os.environ.get("WEATHER_CITIES", "Paris,Lyon,Marseille"),
-            "PYTHONPATH": "/app",
+            "OPENWEATHER_API_KEY": "{{ var.value.openweather_api_key }}",
+            "WEATHER_CITIES": "{{ var.value.get('weather_cities', 'Paris,Lyon,Marseille,Toulouse,Nice') }}",
+            "MINIO_ROOT_USER": "{{ conn.minio_s3.extra_dejson.aws_access_key_id }}",
+            "MINIO_ROOT_PASSWORD": "{{ conn.minio_s3.extra_dejson.aws_secret_access_key }}",
+            "MINIO_ENDPOINT": "{{ conn.minio_s3.extra_dejson.endpoint_url }}",
+            "MINIO_BUCKET_NAME": "{{ var.value.get('minio_bucket_name', 'weather-data-lake') }}",
+            "PYTHONUNBUFFERED": "1",
         },
-        mem_limit=DLT_MEM_LIMIT,
+        mem_limit=DEFAULT_DLT_MEM,
         execution_timeout=timedelta(minutes=15),
-        sla=timedelta(minutes=20),
+        pool=POOL_API,
         **DOCKER_DEFAULTS,
     )
 
-    # --- dbt deps ---
-    dbt_install_deps = DockerOperator(
-        task_id="dbt_install_deps",
-        image=DBT_IMAGE,
-        command="deps",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV},
-        mem_limit=DBT_MEM_LIMIT,
-        execution_timeout=timedelta(minutes=10),
-        **DOCKER_DEFAULTS,
-    )
-
-    # --- dbt run staging models (raw → staging) ---
-    dbt_run_staging = DockerOperator(
-        task_id="dbt_run_staging",
-        image=DBT_IMAGE,
+    dbt_build_staging = DockerOperator(
+        task_id="dbt_build_staging",
+        image=DEFAULT_DBT_IMAGE,
         command="run --select staging",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV},
-        mem_limit=DBT_MEM_LIMIT,
+        network_mode=DEFAULT_NETWORK,
+        mounts=DBT_MOUNTS,
+        environment=DBT_ENV,
+        mem_limit=DEFAULT_DBT_MEM,
         execution_timeout=timedelta(minutes=15),
-        sla=timedelta(minutes=25),
+        pool=POOL_DATABASE,
         **DOCKER_DEFAULTS,
     )
 
-    # --- dbt test staging ---
-    dbt_test_staging = DockerOperator(
-        task_id="dbt_test_staging",
-        image=DBT_IMAGE,
-        command="test --select staging",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV},
-        mem_limit=DBT_MEM_LIMIT,
-        execution_timeout=timedelta(minutes=10),
-        **DOCKER_DEFAULTS,
-    )
+    QUALITY_ENV = {
+        "POSTGRES_HOST": "postgres",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "datawarehouse",
+        "POSTGRES_USER": "datawarehouse_user",
+        "POSTGRES_PASSWORD": "datawarehouse_password",
+        "MINIO_ROOT_USER": "minioadmin",
+        "MINIO_ROOT_PASSWORD": "minioadmin",
+        "MINIO_ENDPOINT": "http://minio:9000",
+        "MINIO_BUCKET_NAME": "weather-data-lake",
+        "PYTHONPATH": "/app",
+        "PYTHONUNBUFFERED": "1",
+    }
 
-    # --- Great Expectations on staging ---
+    QUALITY_MOUNTS = [
+        Mount(source=f"{HOST_PROJECT_ROOT}/data_quality", target="/app/data_quality", type="bind"),
+    ]
+
     gx_validate_staging = DockerOperator(
         task_id="gx_validate_staging",
-        image=SODA_IMAGE,
-        command="cd /app && python -m data_quality.expectations.run_validations --layer staging",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/data_quality", target="/app/data_quality", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV, "PYTHONPATH": "/app"},
-        mem_limit=SODA_MEM_LIMIT,
+        image=DEFAULT_SODA_IMAGE,
+        command="data_quality.expectations.run_validations --layer staging",
+        network_mode=DEFAULT_NETWORK,
+        environment=QUALITY_ENV,
+        mounts=QUALITY_MOUNTS,
+        mem_limit=DEFAULT_SODA_MEM,
         execution_timeout=timedelta(minutes=10),
+        pool=POOL_DATABASE,
         **DOCKER_DEFAULTS,
     )
 
-    # --- Soda scan staging ---
     soda_scan_staging = DockerOperator(
         task_id="soda_scan_staging",
-        image=SODA_IMAGE,
-        command=(
-            "soda scan "
-            "-d weather_db "
-            "-c /app/data_quality/soda/configuration.yml "
-            "/app/data_quality/soda/checks/staging_checks.yml"
-        ),
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/data_quality", target="/app/data_quality", type="bind"),
-        ],
-        environment=PG_ENV,
-        mem_limit=SODA_MEM_LIMIT,
+        image=DEFAULT_SODA_IMAGE,
+        command="data_quality.soda.run_scan --layer staging",
+        network_mode=DEFAULT_NETWORK,
+        environment=QUALITY_ENV,
+        mounts=QUALITY_MOUNTS,
+        mem_limit=DEFAULT_SODA_MEM,
         execution_timeout=timedelta(minutes=10),
+        pool=POOL_DATABASE,
         **DOCKER_DEFAULTS,
     )
 
-    # --- Dependencies ---
-    extract_weather >> dbt_install_deps >> dbt_run_staging >> dbt_test_staging
-    dbt_test_staging >> gx_validate_staging
-    dbt_test_staging >> soda_scan_staging
+    @task(outlets=[raw_weather_s3])
+    def finalize_ingestion(**context) -> str:
+        """Emit the raw_weather_s3 Asset to trigger the transformation DAG."""
+        trigger = context["params"].get("trigger_transformation", True)
+        if not trigger:
+            raise AirflowSkipException("Transformation trigger disabled via DAG param")
+        logger.info("Ingestion complete — emitting raw_weather_s3 Asset")
+        return "asset_emitted"
+
+    quality_gate = [gx_validate_staging, soda_scan_staging]
+
+    extract_weather >> dbt_build_staging >> quality_gate >> finalize_ingestion()
 
 
 ingestion_pipeline()

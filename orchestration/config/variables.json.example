@@ -1,0 +1,14 @@
+{
+  "dlt_image": "weather-pipeline-dlt:1.0.0",
+  "dbt_image": "weather-pipeline-dbt:1.0.0",
+  "soda_image": "weather-pipeline-soda:1.0.0",
+  "dlt_mem_limit": "512m",
+  "dbt_mem_limit": "512m",
+  "soda_mem_limit": "256m",
+  "pipeline_network": "data-engineering-pipeline_pipeline-network",
+  "project_root": ".",
+  "openweather_api_key": "your_api_key_here",
+  "weather_cities": "Paris,Lyon,Marseille,Toulouse,Nice",
+  "minio_bucket_name": "weather-data-lake",
+  "alert_severity_default": "warning"
+}

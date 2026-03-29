@@ -1,0 +1,25 @@
+# Airflow Connections — copy to connections.yaml and adjust values.
+# Imported by orchestration/scripts/airflow_config.sh on container init.
+
+minio_s3:
+  conn_type: aws
+  extra: '{"endpoint_url": "http://minio:9000", "aws_access_key_id": "minioadmin", "aws_secret_access_key": "minioadmin", "region_name": "us-east-1"}'
+
+weather_pipeline_pg:
+  conn_type: postgres
+  host: postgres
+  port: 5432
+  schema: datawarehouse
+  login: datawarehouse_user
+  password: datawarehouse_password
+
+slack_webhook:
+  conn_type: slackwebhook
+  host: https://hooks.slack.com/services
+  password: YOUR_WEBHOOK_TOKEN_HERE
+
+smtp_default:
+  conn_type: smtp
+  host: mailhog
+  port: 1025
+  extra: '{"from_email": "monitoring@weather-pipeline.local"}'

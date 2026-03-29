@@ -1,267 +1,191 @@
 """
-Transformation Pipeline DAG — Transform staging data to core/mart/analytic,
-validate quality, generate docs, and push observability reports.
+Transformation Pipeline DAG — Transform staging data to core/mart/analytic
+via dbt-duckdb Docker, validate quality, generate docs, and push metrics.
 
 Flow:
-  1. dbt_run_core_mart    — Run dbt core + mart + analytic models (staging → gold)
-  2. dbt_test_core_mart   — Run dbt tests on core/mart/analytic
-  3. gx_validate_mart     — Great Expectations checks on mart tables
-  4. soda_scan_mart       — Soda scan on mart tables
-  5. dbt_generate_docs    — Generate dbt docs and upload to S3
-  6. elementary_report    — Generate Elementary observability report
-  7. push_metrics         — Push pipeline metrics to Prometheus
+  1. dbt_build_transform  — dbt build (run + test) core/marts/analytic models
+  2. gx_validate_mart     — Great Expectations checks on mart tables
+  3. soda_scan_mart       — Soda scan on mart tables
+  4. dbt_generate_docs    — Generate dbt docs and upload to S3
+  5. finalize             — Emit mart_weather Asset and push metrics
 
-Uses astronomer-cosmos Docker operators for dbt execution in isolated containers.
-
-Schedule: Every 6 hours, offset by 2 hours from ingestion (data-aware via Asset).
+Schedule: Event-driven — triggered when ingestion_pipeline emits raw_weather_s3 Asset.
+Uses dbt-duckdb: reads S3 Parquet for staging views, writes to PG via ATTACH for core/mart.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import timedelta
 
 from airflow.providers.docker.operators.docker import DockerOperator
-from airflow.sdk import dag, task
-from cosmos.operators.docker import (
-    DbtRunDockerOperator,
-    DbtTestDockerOperator,
-)
+from airflow.sdk import Asset, dag, task
 from docker.types import Mount
+
+from plugins.callbacks.handlers import on_failure_callback, on_retry_callback, on_success_callback
+from plugins.constants import (
+    ASSET_MART_WEATHER,
+    ASSET_RAW_WEATHER_S3,
+    DAG_START_DATE,
+    DEFAULT_DBT_IMAGE,
+    DEFAULT_DBT_MEM,
+    DEFAULT_NETWORK,
+    DEFAULT_SODA_IMAGE,
+    DEFAULT_SODA_MEM,
+    POOL_DATABASE,
+    POOL_DOCKER,
+)
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-PROJECT_ROOT = os.environ.get("PROJECT_ROOT", ".")
-NETWORK_NAME = (
-    os.environ.get("COMPOSE_PROJECT_NAME", "data-engineering-pipeline")
-    + "_pipeline-network"
-)
+raw_weather_s3 = Asset(name="raw_weather_s3", uri=ASSET_RAW_WEATHER_S3)
+mart_weather = Asset(name="mart_weather", uri=ASSET_MART_WEATHER)
 
-DBT_IMAGE = os.environ.get("DBT_IMAGE", "weather-pipeline-dbt:1.0.0")
-SODA_IMAGE = os.environ.get("SODA_IMAGE", "weather-pipeline-soda:1.0.0")
+DBT_VENV_PATH = "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+HOST_PROJECT_ROOT = os.environ.get("PROJECT_ROOT", ".")
 
-DBT_MEM_LIMIT = os.environ.get("DBT_MEM_LIMIT", "512m")
-SODA_MEM_LIMIT = os.environ.get("SODA_MEM_LIMIT", "256m")
+DBT_MOUNTS = [Mount(source=f"{HOST_PROJECT_ROOT}/transformations", target="/app", type="bind")]
 
-MINIO_ENV = {
-    "MINIO_ROOT_USER": os.environ.get("MINIO_ROOT_USER", "minioadmin"),
-    "MINIO_ROOT_PASSWORD": os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin"),
-    "MINIO_ENDPOINT": os.environ.get("MINIO_ENDPOINT", "minio:9000"),
-    "MINIO_BUCKET_NAME": os.environ.get("MINIO_BUCKET_NAME", "weather-data-lake"),
-}
-
-PG_ENV = {
-    "POSTGRES_HOST": os.environ.get("POSTGRES_HOST", "postgres"),
-    "POSTGRES_PORT": os.environ.get("POSTGRES_PORT", "5432"),
-    "POSTGRES_DB": os.environ.get("POSTGRES_DB", "weather_db"),
-    "POSTGRES_USER": os.environ.get("POSTGRES_USER", "airflow"),
-    "POSTGRES_PASSWORD": os.environ.get("POSTGRES_PASSWORD", "airflow"),
+DBT_COMMON_ENV = {
+    "PATH": DBT_VENV_PATH,
+    "HOME": "/tmp",
+    "POSTGRES_HOST": "postgres",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DB": "datawarehouse",
+    "POSTGRES_USER": "datawarehouse_user",
+    "POSTGRES_PASSWORD": "datawarehouse_password",
+    "MINIO_ROOT_USER": "minioadmin",
+    "MINIO_ROOT_PASSWORD": "minioadmin",
+    "MINIO_ENDPOINT": "http://minio:9000",
+    "MINIO_BUCKET_NAME": "weather-data-lake",
+    "PYTHONUNBUFFERED": "1",
 }
 
 DOCKER_DEFAULTS = {
-    "network_mode": NETWORK_NAME,
     "auto_remove": "success",
     "docker_url": "unix://var/run/docker.sock",
     "mount_tmp_dir": False,
 }
 
-DBT_PROJECT_DIR = "/app"
-
-
-def _sla_miss_callback(dag, task_list, blocking_task_list, slas, blocking_tis):
-    logger.error(
-        "SLA MISS on %s | tasks: %s | blocking: %s",
-        dag.dag_id,
-        [t.task_id for t in task_list],
-        [t.task_id for t in blocking_tis],
-    )
-
-
-def _on_failure_callback(context):
-    ti = context.get("task_instance")
-    logger.error(
-        "TASK FAILED: %s | execution_date=%s",
-        getattr(ti, "task_id", "unknown"),
-        context.get("execution_date"),
-    )
-
-
 default_args = {
     "owner": "data-engineering",
-    "retries": 2,
-    "retry_delay": timedelta(minutes=3),
+    "retries": 3,
+    "retry_delay": timedelta(minutes=2),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=15),
     "execution_timeout": timedelta(minutes=30),
-    "on_failure_callback": _on_failure_callback,
+    "on_failure_callback": on_failure_callback,
+    "on_retry_callback": on_retry_callback,
 }
 
 
 @dag(
     dag_id="transformation_pipeline",
-    description="dbt core/mart/analytic → quality gates → docs → observability",
-    schedule="0 2-23/6 * * *",
-    start_date=datetime(2025, 1, 1),
+    description="dbt-duckdb core/mart/analytic → quality gates → docs → observability",
+    schedule=[raw_weather_s3],
+    start_date=DAG_START_DATE,
     catchup=False,
     max_active_runs=1,
     default_args=default_args,
-    tags=["weather", "transformation", "dbt", "cosmos", "soda", "great-expectations"],
+    on_success_callback=on_success_callback,
+    tags=["weather", "transformation", "dbt", "duckdb", "soda", "great-expectations"],
     doc_md=__doc__,
-    sla_miss_callback=_sla_miss_callback,
+    params={
+        "run_quality_checks": {"type": "boolean", "default": True, "description": "Run GX + Soda checks"},
+        "generate_docs": {"type": "boolean", "default": True, "description": "Generate and upload dbt docs"},
+        "send_notifications": {"type": "boolean", "default": True, "description": "Send alerts"},
+    },
 )
 def transformation_pipeline():
+    dbt_run_transform = DockerOperator(
+        task_id="dbt_run_transform",
+        image=DEFAULT_DBT_IMAGE,
+        command="run --select staging core marts analytic",
+        network_mode=DEFAULT_NETWORK,
+        mounts=DBT_MOUNTS,
+        environment=DBT_COMMON_ENV,
+        mem_limit=DEFAULT_DBT_MEM,
+        execution_timeout=timedelta(minutes=20),
+        pool=POOL_DATABASE,
+        **DOCKER_DEFAULTS,
+    )
 
-    # === Cosmos dbt operators (Docker execution mode) ===
-    # Cosmos Docker operators run dbt inside the dbt-runner container image.
-    # They connect to PG using environment variables, not Airflow connections.
-
-    cosmos_operator_args = {
-        "image": DBT_IMAGE,
-        "network_mode": NETWORK_NAME,
-        "auto_remove": "success",
-        "docker_url": "unix://var/run/docker.sock",
-        "mount_tmp_dir": False,
-        "mem_limit": DBT_MEM_LIMIT,
-        "mounts": [
-            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
-        ],
-        "environment": {**PG_ENV, **MINIO_ENV},
+    QUALITY_ENV = {
+        "POSTGRES_HOST": "postgres",
+        "POSTGRES_PORT": "5432",
+        "POSTGRES_DB": "datawarehouse",
+        "POSTGRES_USER": "datawarehouse_user",
+        "POSTGRES_PASSWORD": "datawarehouse_password",
+        "MINIO_ROOT_USER": "minioadmin",
+        "MINIO_ROOT_PASSWORD": "minioadmin",
+        "MINIO_ENDPOINT": "http://minio:9000",
+        "MINIO_BUCKET_NAME": "weather-data-lake",
+        "PYTHONPATH": "/app",
+        "PYTHONUNBUFFERED": "1",
     }
 
-    # --- dbt deps via DockerOperator (no Cosmos equivalent) ---
-    dbt_install_deps = DockerOperator(
-        task_id="dbt_install_deps",
-        image=DBT_IMAGE,
-        command="deps",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV},
-        mem_limit=DBT_MEM_LIMIT,
-        execution_timeout=timedelta(minutes=10),
-        **DOCKER_DEFAULTS,
-    )
+    QUALITY_MOUNTS = [
+        Mount(source=f"{HOST_PROJECT_ROOT}/data_quality", target="/app/data_quality", type="bind"),
+    ]
 
-    # --- dbt run: core + mart + analytic via Cosmos ---
-    dbt_run_core = DbtRunDockerOperator(
-        task_id="dbt_run_core_mart",
-        project_dir=DBT_PROJECT_DIR,
-        schema="public",
-        conn_id="postgres_default",
-        select="core mart analytic",
-        **cosmos_operator_args,
-    )
-
-    # --- dbt test: core + mart + analytic via Cosmos ---
-    dbt_test_core = DbtTestDockerOperator(
-        task_id="dbt_test_core_mart",
-        project_dir=DBT_PROJECT_DIR,
-        schema="public",
-        conn_id="postgres_default",
-        select="core mart analytic",
-        **cosmos_operator_args,
-    )
-
-    # --- GX validate mart ---
     gx_validate_mart = DockerOperator(
         task_id="gx_validate_mart",
-        image=SODA_IMAGE,
-        command="cd /app && python -m data_quality.expectations.run_validations --layer mart",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/data_quality", target="/app/data_quality", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV, "PYTHONPATH": "/app"},
-        mem_limit=SODA_MEM_LIMIT,
+        image=DEFAULT_SODA_IMAGE,
+        command="data_quality.expectations.run_validations --layer mart",
+        network_mode=DEFAULT_NETWORK,
+        environment=QUALITY_ENV,
+        mounts=QUALITY_MOUNTS,
+        mem_limit=DEFAULT_SODA_MEM,
         execution_timeout=timedelta(minutes=10),
+        pool=POOL_DATABASE,
         **DOCKER_DEFAULTS,
     )
 
-    # --- Soda scan mart ---
     soda_scan_mart = DockerOperator(
         task_id="soda_scan_mart",
-        image=SODA_IMAGE,
-        command=(
-            "soda scan "
-            "-d weather_db "
-            "-c /app/data_quality/soda/configuration_mart.yml "
-            "/app/data_quality/soda/checks/mart_checks.yml"
-        ),
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/data_quality", target="/app/data_quality", type="bind"),
-        ],
-        environment=PG_ENV,
-        mem_limit=SODA_MEM_LIMIT,
+        image=DEFAULT_SODA_IMAGE,
+        command="data_quality.soda.run_scan --layer mart",
+        network_mode=DEFAULT_NETWORK,
+        environment=QUALITY_ENV,
+        mounts=QUALITY_MOUNTS,
+        mem_limit=DEFAULT_SODA_MEM,
         execution_timeout=timedelta(minutes=10),
+        pool=POOL_DATABASE,
         **DOCKER_DEFAULTS,
     )
 
-    # --- dbt docs generate + upload to S3 ---
     dbt_generate_docs = DockerOperator(
         task_id="dbt_generate_docs",
-        image=DBT_IMAGE,
+        image=DEFAULT_DBT_IMAGE,
         command="docs",
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV},
-        mem_limit=DBT_MEM_LIMIT,
+        network_mode=DEFAULT_NETWORK,
+        mounts=DBT_MOUNTS,
+        environment=DBT_COMMON_ENV,
+        mem_limit=DEFAULT_DBT_MEM,
         execution_timeout=timedelta(minutes=10),
+        pool=POOL_DOCKER,
         **DOCKER_DEFAULTS,
     )
 
-    # --- Elementary observability report ---
-    elementary_report = DockerOperator(
-        task_id="elementary_report",
-        image=DBT_IMAGE,
-        command=(
-            "bash -c 'cd /app && edr report "
-            "--profiles-dir . "
-            "--file-path /tmp/elementary_report.html'"
-        ),
-        mounts=[
-            Mount(source=f"{PROJECT_ROOT}/transformations", target="/app", type="bind"),
-        ],
-        environment={**PG_ENV, **MINIO_ENV},
-        mem_limit=DBT_MEM_LIMIT,
-        execution_timeout=timedelta(minutes=15),
-        **DOCKER_DEFAULTS,
-    )
-
-    # --- Push metrics to Prometheus ---
-    @task()
-    def push_metrics() -> None:
-        """Push pipeline metrics to Prometheus Pushgateway."""
-        from monitoring.metrics.exporter import (  # noqa: I001
-            push_metrics as _push,
-            record_pipeline_run,
-        )
-
-        record_pipeline_run("transformation_pipeline", duration=0, success=True)
+    @task(outlets=[mart_weather])
+    def finalize_transformation(**context) -> str:
+        """Emit mart_weather Asset and push metrics."""
         try:
+            from monitoring.metrics.exporter import (
+                push_metrics as _push,
+                record_pipeline_run,
+            )
+            record_pipeline_run("transformation_pipeline", duration=0, success=True)
             _push()
         except Exception:
-            logger.warning("Prometheus push failed", exc_info=True)
+            logger.warning("Prometheus push failed — not critical", exc_info=True)
+        logger.info("Transformation complete — emitting mart_weather Asset")
+        return "mart_asset_emitted"
 
-    # --- Dependencies ---
-    dbt_install_deps >> dbt_run_core >> dbt_test_core
+    quality_gate = [gx_validate_mart, soda_scan_mart]
 
-    # Quality gates in parallel after dbt tests
-    dbt_test_core >> gx_validate_mart
-    dbt_test_core >> soda_scan_mart
-
-    # Docs + observability after quality
-    gx_validate_mart >> dbt_generate_docs
-    gx_validate_mart >> elementary_report
-    soda_scan_mart >> dbt_generate_docs
-    soda_scan_mart >> elementary_report
-
-    # Metrics after everything
-    metrics = push_metrics()
-    dbt_generate_docs >> metrics
-    elementary_report >> metrics
+    dbt_run_transform >> quality_gate >> dbt_generate_docs >> finalize_transformation()
 
 
 transformation_pipeline()

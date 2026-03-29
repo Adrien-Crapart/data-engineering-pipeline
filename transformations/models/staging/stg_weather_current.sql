@@ -1,29 +1,41 @@
 -- Staging model: clean and type raw current weather observations.
+-- Reads DLT-normalized Parquet directly from S3 via DuckDB httpfs.
+-- Joins parent table with child weather conditions table.
+
+{% set bucket = var('s3_bucket') %}
+{% set prefix = var('s3_raw_prefix') %}
 
 with source as (
-    select * from {{ source('raw', 'weather_current') }}
+    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_current/*.parquet', hive_partitioning=false)
 ),
 
-renamed as (
+weather_conditions as (
+    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_current__weather/*.parquet', hive_partitioning=false)
+),
+
+joined as (
     select
-        name                        as city_name,
-        sys__country                as country_code,
-        main__temp                  as temperature_celsius,
-        main__feels_like            as feels_like_celsius,
-        main__humidity              as humidity_percent,
-        main__pressure              as pressure_hpa,
-        wind__speed                 as wind_speed_ms,
-        weather__0__main            as weather_condition,
-        weather__0__description     as weather_description,
-        coord__lat                  as latitude,
-        coord__lon                  as longitude,
-        clouds__all                 as cloud_coverage_percent,
-        visibility                  as visibility_meters,
-        to_timestamp(dt)            as measured_at,
-        _dlt_load_id                as load_id,
-        _dlt_id                     as row_id,
-        current_timestamp           as loaded_at
-    from source
+        s.name                        as city_name,
+        s.sys__country                as country_code,
+        s.main__temp                  as temperature_celsius,
+        s.main__feels_like            as feels_like_celsius,
+        s.main__humidity              as humidity_percent,
+        s.main__pressure              as pressure_hpa,
+        s.wind__speed                 as wind_speed_ms,
+        w.main                        as weather_condition,
+        w.description                 as weather_description,
+        s.coord__lat                  as latitude,
+        s.coord__lon                  as longitude,
+        s.clouds__all                 as cloud_coverage_percent,
+        s.visibility                  as visibility_meters,
+        to_timestamp(s.dt)            as measured_at,
+        s._dlt_load_id                as load_id,
+        s._dlt_id                     as row_id,
+        current_timestamp             as loaded_at
+    from source s
+    left join weather_conditions w
+        on s._dlt_id = w._dlt_parent_id
+        and w._dlt_list_idx = 0
 )
 
-select * from renamed
+select * from joined

@@ -2,11 +2,19 @@ weather_pipeline:
   target: dev
   outputs:
     dev:
-      type: postgres
-      host: "{{ env_var('POSTGRES_HOST', 'postgres') }}"
-      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
-      user: "{{ env_var('POSTGRES_USER', 'airflow') }}"
-      password: "{{ env_var('POSTGRES_PASSWORD', 'airflow') }}"
-      dbname: "{{ env_var('POSTGRES_DB', 'weather_db') }}"
-      schema: public
-      threads: 4
+      type: duckdb
+      path: ":memory:"
+      extensions:
+        - httpfs
+        - postgres
+      settings:
+        s3_region: us-east-1
+        s3_endpoint: "{{ env_var('MINIO_ENDPOINT_HOST', 'minio:9000') }}"
+        s3_access_key_id: "{{ env_var('MINIO_ROOT_USER', 'minioadmin') }}"
+        s3_secret_access_key: "{{ env_var('MINIO_ROOT_PASSWORD', 'minioadmin') }}"
+        s3_use_ssl: false
+        s3_url_style: path
+      attach:
+        - path: "dbname={{ env_var('POSTGRES_DB', 'datawarehouse') }} user={{ env_var('POSTGRES_USER', 'datawarehouse_user') }} password={{ env_var('POSTGRES_PASSWORD', 'datawarehouse_password') }} host={{ env_var('POSTGRES_HOST', 'postgres') }} port={{ env_var('POSTGRES_PORT', '5432') }}"
+          type: postgres
+          alias: pg

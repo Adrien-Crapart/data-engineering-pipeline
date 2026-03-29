@@ -1,4 +1,4 @@
-"""MinIO client for storing raw API responses as Parquet in the S3-compatible data lake."""
+"""MinIO client for reading/writing raw data and reports on the S3-compatible data lake."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 
 class DataLakeClient:
-    """Writes immutable raw data as Parquet to MinIO, partitioned by date.
+    """Reads and writes immutable raw data as Parquet to MinIO.
 
-    Layout: raw/{source}/year=YYYY/month=MM/day=DD/{source}_{city}_{ts}.parquet
+    Layout: raw/{pipeline}/{table_name}/{load_id}.{file_id}.parquet
     """
 
     def __init__(self, config: PipelineConfig) -> None:
@@ -43,25 +43,18 @@ class DataLakeClient:
             if not self._client.bucket_exists(self._bucket):
                 self._client.make_bucket(self._bucket)
                 logger.info("Created bucket: %s", self._bucket)
-            else:
-                logger.info("Bucket exists: %s", self._bucket)
         except S3Error as exc:
             logger.error("Failed to ensure bucket %s: %s", self._bucket, exc)
             raise
 
-    def store_raw_parquet(self, data: dict, source: str, city: str) -> str:
-        """Store a raw API response as a Parquet file, return the S3 key.
-
-        The dict is flattened into a single-row Parquet file with the full
-        JSON payload stored alongside extracted top-level fields.
-        """
+    def store_raw_parquet(
+        self, data: dict, source: str, city: str, pipeline: str = "openweather"
+    ) -> str:
+        """Store a raw API response as a Parquet file under raw/{pipeline}/."""
         now = datetime.now(timezone.utc)
-        timestamp = int(now.timestamp())
-        key = (
-            f"raw/{source}/"
-            f"year={now.year}/month={now.month:02d}/day={now.day:02d}/"
-            f"{source}_{city.lower()}_{timestamp}.parquet"
-        )
+        date_part = now.strftime("%Y-%m-%d")
+        ts_part = now.strftime("%Y%m%d_%H%M%S")
+        key = f"raw/{pipeline}/{date_part}/{ts_part}/{source}_{city.lower()}.parquet"
 
         row = {
             "city": city,
@@ -94,10 +87,7 @@ class DataLakeClient:
         )
 
         s3_url = f"s3://{self._bucket}/{key}"
-        logger.info(
-            "Stored Parquet: %s (%d bytes) | city=%s source=%s",
-            s3_url, payload_size, city, source,
-        )
+        logger.info("Stored Parquet: %s (%d bytes)", s3_url, payload_size)
         return s3_url
 
     def store_raw(self, data: dict, source: str, city: str) -> str:
@@ -112,6 +102,16 @@ class DataLakeClient:
         for obj in self._client.list_objects(self._bucket, prefix=prefix, recursive=recursive):
             keys.append(obj.object_name)
         return keys
+
+    def list_dlt_tables(self, pipeline: str = "openweather") -> list[str]:
+        """List DLT table directories under raw/{pipeline}/data/."""
+        prefix = f"raw/{pipeline}/data/"
+        dirs: set[str] = set()
+        for obj in self._client.list_objects(self._bucket, prefix=prefix, recursive=True):
+            parts = obj.object_name[len(prefix):].split("/")
+            if parts:
+                dirs.add(parts[0])
+        return sorted(dirs)
 
     def get_raw(self, key: str) -> bytes:
         """Download a raw file from the data lake."""

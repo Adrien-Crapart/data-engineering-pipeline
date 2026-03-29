@@ -44,3 +44,8 @@ make up-full
 
 The core stack must be running first (`make up`), then start OpenMetadata
 with `make up-full`.
+
+## Accessing OpenMetadata
+
+- **OpenMetadata UI**: [http://localhost:8585](http://localhost:8585)
+- **Credentials**: admin@open-metadata.org / admin

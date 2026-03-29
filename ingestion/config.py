@@ -16,9 +16,9 @@ class PipelineConfig:
     units: str = "metric"
     postgres_host: str = "postgres"
     postgres_port: int = 5432
-    postgres_db: str = "weather_db"
-    postgres_user: str = "airflow"
-    postgres_password: str = "airflow"
+    postgres_db: str = "datawarehouse"
+    postgres_user: str = "datawarehouse_user"
+    postgres_password: str = "datawarehouse_password"
     minio_endpoint: str = "minio:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"

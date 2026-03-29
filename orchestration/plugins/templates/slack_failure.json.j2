@@ -1,0 +1,52 @@
+[
+  {
+    "type": "header",
+    "text": {
+      "type": "plain_text",
+      "text": "{{ emoji }} Pipeline Failure",
+      "emoji": true
+    }
+  },
+  {
+    "type": "section",
+    "fields": [
+      { "type": "mrkdwn", "text": "*DAG:*\n`{{ dag_id }}`" },
+      { "type": "mrkdwn", "text": "*Task:*\n`{{ task_id }}`" },
+      { "type": "mrkdwn", "text": "*Severity:*\n{{ severity | upper }}" },
+      { "type": "mrkdwn", "text": "*Try:*\n{{ try_number }} / {{ max_tries }}" }
+    ]
+  },
+  {
+    "type": "section",
+    "fields": [
+      { "type": "mrkdwn", "text": "*Run ID:*\n`{{ run_id }}`" },
+      { "type": "mrkdwn", "text": "*Logical Date:*\n{{ logical_date }}" }
+    ]
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*Error:*\n```{{ error[:500] if error else 'No error details' }}```"
+    }
+  },
+  {% if log_url %}
+  {
+    "type": "actions",
+    "elements": [
+      {
+        "type": "button",
+        "text": { "type": "plain_text", "text": "View Logs", "emoji": true },
+        "url": "{{ log_url }}",
+        "style": "danger"
+      }
+    ]
+  },
+  {% endif %}
+  {
+    "type": "context",
+    "elements": [
+      { "type": "mrkdwn", "text": "Weather Data Pipeline | Airflow Alerting" }
+    ]
+  }
+]

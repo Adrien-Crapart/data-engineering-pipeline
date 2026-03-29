@@ -1,11 +1,20 @@
 -- Staging model: unnest and clean forecast entries from the raw API response.
+-- Reads DLT-normalized Parquet directly from S3 via DuckDB httpfs.
+-- Joins forecast list with parent city data and weather conditions.
+
+{% set bucket = var('s3_bucket') %}
+{% set prefix = var('s3_raw_prefix') %}
 
 with source as (
-    select * from {{ source('raw', 'weather_forecast') }}
+    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast/*.parquet', hive_partitioning=false)
 ),
 
 forecast_entries as (
-    select * from {{ source('raw', 'weather_forecast__list') }}
+    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast__list/*.parquet', hive_partitioning=false)
+),
+
+weather_conditions as (
+    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast__list__weather/*.parquet', hive_partitioning=false)
 ),
 
 renamed as (
@@ -19,8 +28,8 @@ renamed as (
         f.main__humidity                as humidity_percent,
         f.main__pressure                as pressure_hpa,
         f.wind__speed                   as wind_speed_ms,
-        f.weather__0__main              as weather_condition,
-        f.weather__0__description       as weather_description,
+        w.main                          as weather_condition,
+        w.description                   as weather_description,
         f.clouds__all                   as cloud_coverage_percent,
         f.pop                           as precipitation_probability,
         to_timestamp(f.dt)              as forecast_at,
@@ -30,6 +39,9 @@ renamed as (
     from source s
     inner join forecast_entries f
         on s._dlt_id = f._dlt_parent_id
+    left join weather_conditions w
+        on f._dlt_id = w._dlt_parent_id
+        and w._dlt_list_idx = 0
 )
 
 select * from renamed

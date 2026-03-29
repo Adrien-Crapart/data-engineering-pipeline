@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-DAGS_DIR = Path(__file__).resolve().parents[2] / "orchestration" / "airflow" / "dags"
+DAGS_DIR = Path(__file__).resolve().parents[2] / "orchestration" / "dags"
 
 
 @pytest.mark.unit
@@ -17,16 +17,17 @@ class TestDagFilesExist:
     def test_dags_directory_exists(self):
         assert DAGS_DIR.exists(), f"DAGs directory not found: {DAGS_DIR}"
 
-    def test_weather_pipeline_dag_exists(self):
-        assert (DAGS_DIR / "weather_pipeline_dag.py").exists()
+    def test_ingestion_dag_exists(self):
+        assert (DAGS_DIR / "ingestion_pipeline_dag.py").exists()
 
-    def test_no_replay_dag(self):
-        assert not (DAGS_DIR / "replay_dag.py").exists(), "replay_dag.py should not exist"
+    def test_transformation_dag_exists(self):
+        assert (DAGS_DIR / "transformation_pipeline_dag.py").exists()
 
-    def test_no_metadata_ingestion_dag(self):
-        assert not (DAGS_DIR / "metadata_ingestion_dag.py").exists(), (
-            "metadata_ingestion_dag.py should not exist"
-        )
+    def test_monitoring_dag_exists(self):
+        assert (DAGS_DIR / "monitoring_dag.py").exists()
+
+    def test_openmetadata_dag_exists(self):
+        assert (DAGS_DIR / "openmetadata_ingestion_dag.py").exists()
 
 
 @pytest.mark.unit
@@ -51,18 +52,60 @@ class TestDagParsing:
                 f"{dag_file.name} is missing a module-level docstring"
             )
 
-    def test_weather_pipeline_uses_docker_operator(self):
-        content = (DAGS_DIR / "weather_pipeline_dag.py").read_text(encoding="utf-8")
-        assert "DockerOperator" in content, "weather_pipeline must use DockerOperator"
-        assert "BashOperator" not in content, "weather_pipeline must not use BashOperator"
 
-    def test_weather_pipeline_has_separate_images(self):
-        content = (DAGS_DIR / "weather_pipeline_dag.py").read_text(encoding="utf-8")
-        assert "weather-pipeline-dlt" in content
-        assert "weather-pipeline-dbt" in content
-        assert "weather-pipeline-soda" in content
+@pytest.mark.unit
+class TestIngestionDagConventions:
+    """Verify ingestion DAG follows the required patterns."""
 
-    def test_weather_pipeline_uses_mount_objects(self):
-        content = (DAGS_DIR / "weather_pipeline_dag.py").read_text(encoding="utf-8")
-        assert "from docker.types import Mount" in content
-        assert "Mount(" in content
+    def _read(self):
+        return (DAGS_DIR / "ingestion_pipeline_dag.py").read_text(encoding="utf-8")
+
+    def test_uses_docker_operator(self):
+        content = self._read()
+        assert "DockerOperator" in content
+
+    def test_uses_assets(self):
+        content = self._read()
+        assert "Asset(" in content
+        assert "raw_weather_s3" in content
+
+    def test_uses_params(self):
+        content = self._read()
+        assert "Param(" in content
+        assert "force_download" in content
+        assert "trigger_transformation" in content
+
+    def test_uses_pendulum(self):
+        content = self._read()
+        assert "DAG_START_DATE" in content
+
+    def test_uses_pools(self):
+        content = self._read()
+        assert "POOL_" in content
+
+    def test_uses_callbacks(self):
+        content = self._read()
+        assert "on_failure_callback" in content
+        assert "on_retry_callback" in content
+
+    def test_uses_airflow_variables_not_os_environ(self):
+        content = self._read()
+        assert "os.environ.get" not in content
+        assert "var.value" in content or "Variable.get" in content
+
+
+@pytest.mark.unit
+class TestTransformationDagConventions:
+    """Verify transformation DAG is asset-driven."""
+
+    def _read(self):
+        return (DAGS_DIR / "transformation_pipeline_dag.py").read_text(encoding="utf-8")
+
+    def test_scheduled_on_asset(self):
+        content = self._read()
+        assert "schedule=[raw_weather_s3]" in content
+
+    def test_produces_mart_asset(self):
+        content = self._read()
+        assert "mart_weather" in content
+        assert "outlets=" in content

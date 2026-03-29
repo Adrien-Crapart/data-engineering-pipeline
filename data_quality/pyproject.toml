@@ -7,6 +7,8 @@ requires-python = ">=3.12"
 dependencies = [
     "soda-core-postgres>=3.3.0",
     "great_expectations>=1.0.0",
+    "sqlalchemy>=2.0.0",
+    "setuptools>=70.0.0",
     "minio>=7.2.0",
     "psycopg2-binary>=2.9.0",
     "pyyaml>=6.0",
