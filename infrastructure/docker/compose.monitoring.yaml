@@ -8,7 +8,7 @@ services:
   # ── StatsD Exporter (Airflow metrics → Prometheus) ──
   statsd-exporter:
     image: prom/statsd-exporter:v0.27.2
-    container_name: statsd-exporter
+    container_name: statsd_exporter_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -35,7 +35,7 @@ services:
   # ── Prometheus ──
   prometheus:
     image: prom/prometheus:v3.2.1
-    container_name: prometheus
+    container_name: prometheus_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -70,7 +70,7 @@ services:
   # ── Prometheus Pushgateway (pipeline metrics) ──
   prometheus-pushgateway:
     image: prom/pushgateway:v1.11.2
-    container_name: prometheus-pushgateway
+    container_name: prometheus_pushgateway_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -92,7 +92,7 @@ services:
   # ── Alertmanager ──
   alertmanager:
     image: prom/alertmanager:v0.28.1
-    container_name: alertmanager
+    container_name: alertmanager_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -123,7 +123,7 @@ services:
   # ── Node Exporter (host metrics) ──
   node-exporter:
     image: prom/node-exporter:v1.9.1
-    container_name: node-exporter
+    container_name: node_exporter_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -153,7 +153,7 @@ services:
 
   # ── Docker Exporter (container metrics) ──
   docker-exporter:
-    container_name: docker-exporter
+    container_name: docker_exporter_monitoring
     build:
       context: ./monitoring/docker-exporter
     restart: unless-stopped
@@ -172,7 +172,7 @@ services:
   # ── Grafana ──
   grafana:
     image: grafana/grafana:12.4.0
-    container_name: grafana
+    container_name: grafana_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -215,7 +215,7 @@ services:
   # ── Loki (log aggregation) ──
   loki:
     image: grafana/loki:3.4.2
-    container_name: loki
+    container_name: loki_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -242,7 +242,7 @@ services:
   # ── Promtail (log collector) ──
   promtail:
     image: grafana/promtail:3.4.2
-    container_name: promtail
+    container_name: promtail_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -263,7 +263,7 @@ services:
   # ── MailHog (email testing) ──
   mailhog:
     image: mailhog/mailhog:v1.0.1
-    container_name: mailhog
+    container_name: mailhog_monitoring
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -276,7 +276,46 @@ services:
           memory: 128M
           cpus: "0.25"
 
+  # ── Metabase (Business Intelligence) ──
+  metabase:
+    image: metabase/metabase:v0.51.7
+    container_name: metabase_monitoring
+    restart: unless-stopped
+    networks:
+      - pipeline-network
+    ports:
+      - "3001:3000"
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 5432
+      MB_DB_USER: ${METABASE_DB_USER:-metabase_user}
+      MB_DB_PASS: ${METABASE_DB_PASSWORD:-metabase_password}
+      MB_DB_HOST: postgres
+      # Java heap settings
+      JAVA_OPTS: -Xmx1g -Xms512m
+    volumes:
+      - metabase-data:/metabase-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "1.00"
+        reservations:
+          memory: 768M
+          cpus: "0.50"
+
 volumes:
   prometheus-data:
   grafana-data:
   loki-data:
+  metabase-data:

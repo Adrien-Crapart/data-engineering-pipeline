@@ -1,0 +1,16 @@
+version: 2
+
+models:
+  - name: quarantine_weather_current
+    description: >
+      Rejected rows from raw weather_current that fail pre-staging validation.
+      Each row includes a rejection_reason column for triage.
+    config:
+      tags: ["quarantine", "weather"]
+
+  - name: quarantine_weather_forecast
+    description: >
+      Rejected rows from raw weather_forecast that fail pre-staging validation.
+      Each row includes a rejection_reason column for triage.
+    config:
+      tags: ["quarantine", "weather"]

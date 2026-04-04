@@ -4,9 +4,10 @@ models:
   - name: stg_weather_current
     description: >
       Cleaned current weather observations with properly named columns
-      and typed values. One row per city per extraction.
+      and typed values. Pre-validated: only rows passing schema/type checks.
+      One row per city per extraction.
     config:
-      tags: ["staging", "weather"]
+      tags: ["staging", "weather", "silver"]
     tests:
       - elementary.volume_anomalies:
           timestamp_column: measured_at
@@ -19,31 +20,48 @@ models:
           - not_null
       - name: country_code
         description: ISO 3166 country code.
+        tests:
+          - not_null
       - name: temperature_celsius
         description: Current temperature in Celsius.
         tests:
           - not_null
+          - dbt_utils.expression_is_true:
+              expression: "temperature_celsius between -90 and 60"
       - name: feels_like_celsius
         description: Perceived temperature in Celsius.
       - name: humidity_percent
         description: Humidity percentage (0-100).
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "humidity_percent is null or humidity_percent between 0 and 100"
       - name: pressure_hpa
         description: Atmospheric pressure in hPa.
       - name: wind_speed_ms
         description: Wind speed in meters per second.
       - name: weather_condition
         description: Main weather condition (e.g. Clear, Rain, Snow).
+        tests:
+          - accepted_values:
+              values: ["Clear", "Clouds", "Rain", "Snow", "Drizzle", "Thunderstorm", "Mist", "Fog", "Haze", "Smoke", "Dust", "Sand", "Ash", "Squall", "Tornado"]
+              config:
+                severity: warn
       - name: measured_at
         description: Timestamp of the observation (UTC).
         tests:
           - not_null
+      - name: row_id
+        description: Unique row identifier from DLT.
+        tests:
+          - unique
+          - not_null
 
   - name: stg_weather_forecast
     description: >
-      Cleaned and unnested forecast entries. One row per city per
-      3-hour forecast slot.
+      Cleaned and unnested forecast entries. Pre-validated: only rows
+      passing schema/type checks. One row per city per 3-hour forecast slot.
     config:
-      tags: ["staging", "weather"]
+      tags: ["staging", "weather", "silver"]
     tests:
       - elementary.volume_anomalies:
           timestamp_column: forecast_at
@@ -58,7 +76,24 @@ models:
         description: Forecasted temperature in Celsius.
         tests:
           - not_null
+          - dbt_utils.expression_is_true:
+              expression: "temperature_celsius between -90 and 60"
+      - name: humidity_percent
+        description: Forecasted humidity percentage (0-100).
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "humidity_percent is null or humidity_percent between 0 and 100"
+      - name: precipitation_probability
+        description: Probability of precipitation (0.0 to 1.0).
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "precipitation_probability is null or precipitation_probability between 0 and 1"
       - name: forecast_at
         description: Timestamp of the forecast slot (UTC).
         tests:
+          - not_null
+      - name: row_id
+        description: Unique row identifier from DLT.
+        tests:
+          - unique
           - not_null

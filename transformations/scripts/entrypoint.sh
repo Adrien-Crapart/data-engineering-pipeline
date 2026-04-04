@@ -22,12 +22,22 @@ export MINIO_ENDPOINT_HOST="${MINIO_RAW#http://}"
 MINIO_ENDPOINT_HOST="${MINIO_ENDPOINT_HOST#https://}"
 export MINIO_ENDPOINT_HOST
 
+# Use dbt-ol wrapper when OpenLineage transport is configured
+DBT_BIN="dbt"
+if [ -n "${OPENLINEAGE_URL:-}" ] || [ -n "${OPENLINEAGE_CONFIG:-}" ]; then
+    if command -v dbt-ol &>/dev/null; then
+        DBT_BIN="dbt-ol"
+        echo "OpenLineage enabled — using dbt-ol wrapper"
+    fi
+fi
+
 echo "=== dbt entrypoint ==="
 echo "  command:       $DBT_CMD"
 echo "  args:          $DBT_ARGS"
 echo "  project dir:   $DBT_PROJECT_DIR"
 echo "  profiles:      $DBT_PROJECT_DIR/profiles.yml"
 echo "  minio host:    $MINIO_ENDPOINT_HOST"
+echo "  dbt binary:    $DBT_BIN"
 echo ""
 
 wait_for_postgres() {
@@ -65,14 +75,22 @@ case "$DBT_CMD" in
         dbt deps $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
     run)
+        echo "--- dbt deps ---"
+        dbt deps $PROFILES_FLAG
         echo "--- dbt run ---"
-        dbt run $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
+        $DBT_BIN run $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
     test)
+        echo "--- dbt deps ---"
+        dbt deps $PROFILES_FLAG
         echo "--- dbt test ---"
-        dbt test $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
+        $DBT_BIN test $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
     docs)
+        echo "--- dbt deps ---"
+        dbt deps $PROFILES_FLAG
+        echo "--- dbt run (populate catalog for dbt-duckdb :memory:) ---"
+        $DBT_BIN run $PROFILES_FLAG --select staging core marts analytic || true
         echo "--- dbt docs generate ---"
         dbt docs generate $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         if [ $EXIT_CODE -eq 0 ]; then
@@ -83,14 +101,14 @@ case "$DBT_CMD" in
     build)
         echo "--- dbt build (deps + run + test) ---"
         dbt deps $PROFILES_FLAG
-        dbt run $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
+        $DBT_BIN run $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         if [ $EXIT_CODE -eq 0 ]; then
-            dbt test $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
+            $DBT_BIN test $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         fi
         ;;
     *)
         echo "--- dbt $DBT_CMD ---"
-        dbt "$DBT_CMD" $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
+        $DBT_BIN "$DBT_CMD" $PROFILES_FLAG $DBT_ARGS || EXIT_CODE=$?
         ;;
 esac
 

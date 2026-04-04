@@ -9,6 +9,6 @@
   "project_root": ".",
   "openweather_api_key": "your_api_key_here",
   "weather_cities": "Paris,Lyon,Marseille,Toulouse,Nice",
-  "minio_bucket_name": "weather-data-lake",
+  "minio_bucket_name": "data-lake",
   "alert_severity_default": "warning"
 }

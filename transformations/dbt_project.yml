@@ -16,14 +16,19 @@ clean-targets:
 
 vars:
   dbt_utils_dispatch_list: [dbt_utils]
-  s3_bucket: "{{ env_var('MINIO_BUCKET_NAME', 'weather-data-lake') }}"
+  s3_bucket: "{{ env_var('MINIO_BUCKET_NAME', 'data-lake') }}"
   s3_raw_prefix: "raw/openweather/data"
 
 models:
   weather_pipeline:
     staging:
       +materialized: table
+      +database: pg
       +schema: staging
+    staging_quarantine:
+      +materialized: table
+      +database: pg
+      +schema: staging_quarantine
     core:
       +materialized: table
       +database: pg

@@ -3,14 +3,16 @@ Transformation Pipeline DAG — Transform staging data to core/mart/analytic
 via dbt-duckdb Docker, validate quality, generate docs, and push metrics.
 
 Flow:
-  1. dbt_build_transform  — dbt build (run + test) core/marts/analytic models
-  2. gx_validate_mart     — Great Expectations checks on mart tables
-  3. soda_scan_mart       — Soda scan on mart tables
-  4. dbt_generate_docs    — Generate dbt docs and upload to S3
-  5. finalize             — Emit mart_weather Asset and push metrics
+  1. dbt_run_transform    — dbt run core/marts/analytic models (reads PG staging, writes PG core/mart)
+  2. gx_validate_core     — Great Expectations checks on core tables
+  3. soda_scan_core       — Soda scan on core tables
+  4. gx_validate_mart     — Great Expectations checks on mart tables
+  5. soda_scan_mart       — Soda scan on mart tables
+  6. dbt_generate_docs    — Generate dbt docs and upload to S3
+  7. finalize             — Emit mart_weather Asset and push metrics
 
-Schedule: Event-driven — triggered when ingestion_pipeline emits raw_weather_s3 Asset.
-Uses dbt-duckdb: reads S3 Parquet for staging views, writes to PG via ATTACH for core/mart.
+Schedule: Event-driven — triggered when quality_gate_pipeline emits staging_validated Asset.
+Uses dbt-duckdb: reads PG staging via ATTACH, writes to PG core/mart via ATTACH.
 """
 
 from __future__ import annotations
@@ -21,12 +23,16 @@ from datetime import timedelta
 
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import Asset, dag, task
+from airflow.sdk.bases.operator import chain
 from docker.types import Mount
-
-from plugins.callbacks.handlers import on_failure_callback, on_retry_callback, on_success_callback
+from plugins.callbacks.handlers import (
+    on_failure_callback,
+    on_retry_callback,
+    on_success_callback,
+)
 from plugins.constants import (
     ASSET_MART_WEATHER,
-    ASSET_RAW_WEATHER_S3,
+    ASSET_STAGING_VALIDATED,
     DAG_START_DATE,
     DEFAULT_DBT_IMAGE,
     DEFAULT_DBT_MEM,
@@ -39,7 +45,7 @@ from plugins.constants import (
 
 logger = logging.getLogger(__name__)
 
-raw_weather_s3 = Asset(name="raw_weather_s3", uri=ASSET_RAW_WEATHER_S3)
+staging_validated = Asset(name="staging_validated", uri=ASSET_STAGING_VALIDATED)
 mart_weather = Asset(name="mart_weather", uri=ASSET_MART_WEATHER)
 
 DBT_VENV_PATH = "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -58,7 +64,7 @@ DBT_COMMON_ENV = {
     "MINIO_ROOT_USER": "minioadmin",
     "MINIO_ROOT_PASSWORD": "minioadmin",
     "MINIO_ENDPOINT": "http://minio:9000",
-    "MINIO_BUCKET_NAME": "weather-data-lake",
+    "MINIO_BUCKET_NAME": "data-lake",
     "PYTHONUNBUFFERED": "1",
 }
 
@@ -67,6 +73,28 @@ DOCKER_DEFAULTS = {
     "docker_url": "unix://var/run/docker.sock",
     "mount_tmp_dir": False,
 }
+
+QUALITY_ENV = {
+    "POSTGRES_HOST": "postgres",
+    "POSTGRES_PORT": "5432",
+    "POSTGRES_DB": "datawarehouse",
+    "POSTGRES_USER": "datawarehouse_user",
+    "POSTGRES_PASSWORD": "datawarehouse_password",
+    "MINIO_ROOT_USER": "minioadmin",
+    "MINIO_ROOT_PASSWORD": "minioadmin",
+    "MINIO_ENDPOINT": "http://minio:9000",
+    "MINIO_BUCKET_NAME": "data-lake",
+    "PYTHONPATH": "/app",
+    "PYTHONUNBUFFERED": "1",
+}
+
+QUALITY_MOUNTS = [
+    Mount(
+        source=f"{HOST_PROJECT_ROOT}/data_quality",
+        target="/app/data_quality",
+        type="bind",
+    ),
+]
 
 default_args = {
     "owner": "data-engineering",
@@ -82,19 +110,39 @@ default_args = {
 
 @dag(
     dag_id="transformation_pipeline",
-    description="dbt-duckdb core/mart/analytic → quality gates → docs → observability",
-    schedule=[raw_weather_s3],
+    description="dbt-duckdb core/mart/analytic -> quality gates (core + mart) -> docs -> observability",
+    schedule=[staging_validated],
     start_date=DAG_START_DATE,
     catchup=False,
     max_active_runs=1,
     default_args=default_args,
     on_success_callback=on_success_callback,
-    tags=["weather", "transformation", "dbt", "duckdb", "soda", "great-expectations"],
+    tags=[
+        "weather",
+        "transformation",
+        "dbt",
+        "duckdb",
+        "soda",
+        "great-expectations",
+        "medallion",
+    ],
     doc_md=__doc__,
     params={
-        "run_quality_checks": {"type": "boolean", "default": True, "description": "Run GX + Soda checks"},
-        "generate_docs": {"type": "boolean", "default": True, "description": "Generate and upload dbt docs"},
-        "send_notifications": {"type": "boolean", "default": True, "description": "Send alerts"},
+        "run_quality_checks": {
+            "type": "boolean",
+            "default": True,
+            "description": "Run GX + Soda checks",
+        },
+        "generate_docs": {
+            "type": "boolean",
+            "default": True,
+            "description": "Generate and upload dbt docs",
+        },
+        "send_notifications": {
+            "type": "boolean",
+            "default": True,
+            "description": "Send alerts",
+        },
     },
 )
 def transformation_pipeline():
@@ -111,23 +159,31 @@ def transformation_pipeline():
         **DOCKER_DEFAULTS,
     )
 
-    QUALITY_ENV = {
-        "POSTGRES_HOST": "postgres",
-        "POSTGRES_PORT": "5432",
-        "POSTGRES_DB": "datawarehouse",
-        "POSTGRES_USER": "datawarehouse_user",
-        "POSTGRES_PASSWORD": "datawarehouse_password",
-        "MINIO_ROOT_USER": "minioadmin",
-        "MINIO_ROOT_PASSWORD": "minioadmin",
-        "MINIO_ENDPOINT": "http://minio:9000",
-        "MINIO_BUCKET_NAME": "weather-data-lake",
-        "PYTHONPATH": "/app",
-        "PYTHONUNBUFFERED": "1",
-    }
+    gx_validate_core = DockerOperator(
+        task_id="gx_validate_core",
+        image=DEFAULT_SODA_IMAGE,
+        command="data_quality.expectations.run_validations --layer core",
+        network_mode=DEFAULT_NETWORK,
+        environment=QUALITY_ENV,
+        mounts=QUALITY_MOUNTS,
+        mem_limit=DEFAULT_SODA_MEM,
+        execution_timeout=timedelta(minutes=10),
+        pool=POOL_DATABASE,
+        **DOCKER_DEFAULTS,
+    )
 
-    QUALITY_MOUNTS = [
-        Mount(source=f"{HOST_PROJECT_ROOT}/data_quality", target="/app/data_quality", type="bind"),
-    ]
+    soda_scan_core = DockerOperator(
+        task_id="soda_scan_core",
+        image=DEFAULT_SODA_IMAGE,
+        command="data_quality.soda.run_scan --layer core",
+        network_mode=DEFAULT_NETWORK,
+        environment=QUALITY_ENV,
+        mounts=QUALITY_MOUNTS,
+        mem_limit=DEFAULT_SODA_MEM,
+        execution_timeout=timedelta(minutes=10),
+        pool=POOL_DATABASE,
+        **DOCKER_DEFAULTS,
+    )
 
     gx_validate_mart = DockerOperator(
         task_id="gx_validate_mart",
@@ -172,10 +228,9 @@ def transformation_pipeline():
     def finalize_transformation(**context) -> str:
         """Emit mart_weather Asset and push metrics."""
         try:
-            from monitoring.metrics.exporter import (
-                push_metrics as _push,
-                record_pipeline_run,
-            )
+            from monitoring.metrics.exporter import push_metrics as _push
+            from monitoring.metrics.exporter import record_pipeline_run
+
             record_pipeline_run("transformation_pipeline", duration=0, success=True)
             _push()
         except Exception:
@@ -183,9 +238,16 @@ def transformation_pipeline():
         logger.info("Transformation complete — emitting mart_weather Asset")
         return "mart_asset_emitted"
 
-    quality_gate = [gx_validate_mart, soda_scan_mart]
+    core_quality = [gx_validate_core, soda_scan_core]
+    mart_quality = [gx_validate_mart, soda_scan_mart]
 
-    dbt_run_transform >> quality_gate >> dbt_generate_docs >> finalize_transformation()
+    chain(
+        dbt_run_transform,
+        core_quality,
+        mart_quality,
+        dbt_generate_docs,
+        finalize_transformation(),
+    )
 
 
 transformation_pipeline()

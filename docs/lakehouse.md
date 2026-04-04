@@ -34,7 +34,7 @@ graph LR
 dlt writes Parquet files to MinIO S3 using this layout:
 
 ```
-s3://weather-data-lake/
+s3://data-lake/
 └── raw/
     ├── weather_current/
     │   ├── <load_id_1>.<file_id>.parquet
@@ -53,7 +53,7 @@ and full auditability of the raw layer.
 dbt-duckdb reads Parquet directly from S3 via the `httpfs` extension:
 
 ```sql
-SELECT * FROM read_parquet('s3://weather-data-lake/raw/weather_current/**/*.parquet')
+SELECT * FROM read_parquet('s3://data-lake/raw/weather_current/**/*.parquet')
 ```
 
 Staging models are DuckDB views (zero storage cost). Mart models are materialized

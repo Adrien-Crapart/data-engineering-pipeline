@@ -1,0 +1,92 @@
+---
+description: Rule to always verify running container versions before answering questions or debugging issues
+alwaysApply: true
+---
+
+# Version Verification Protocol
+
+## Core Rule
+
+**BEFORE** answering any question about a tool, service, or technology used in this project,
+**ALWAYS verify the actual running version** by checking:
+
+1. Docker container images: `docker ps --format "table {{.Names}}\t{{.Image}}"`
+2. Compose files in `infrastructure/docker/` for pinned image tags
+3. `pyproject.toml` files for Python dependency versions
+4. The official documentation **for that specific version**
+
+## Why This Rule Exists
+
+Different versions of the same tool can have completely different UIs, APIs, and terminology.
+Example: OpenMetadata 1.12.x renamed "Ingestion" tab to "Agents" tab, and "Add Ingestion" to "Add Agent".
+Providing instructions for the wrong version wastes time and causes confusion.
+
+## Verified Component Versions (update after each check)
+
+| Component | Version | Image / Source | Last Verified |
+|---|---|---|---|
+| OpenMetadata Server | 1.12.3 | `docker.getcollate.io/openmetadata/server:1.12.3` | 2026-04-02 |
+| OpenMetadata Ingestion | 1.12.3 | `docker.getcollate.io/openmetadata/ingestion:1.12.3` | 2026-04-02 |
+| Elasticsearch | 9.0.2 | `docker.elastic.co/elasticsearch/elasticsearch:9.0.2` | 2026-04-02 |
+| PostgreSQL | 16 | `postgres:16-alpine` | 2026-04-02 |
+| Apache Airflow | 3.x | Custom build (`orchestration/Dockerfile`) | 2026-04-02 |
+| MinIO | RELEASE.2025-09-07 | `minio/minio:RELEASE.2025-09-07T16-13-09Z` | 2026-04-02 |
+| Apache Kafka | 4.0.0 | `apache/kafka:4.0.0` | 2026-04-02 |
+| Grafana | 12.4.0 | `grafana/grafana:12.4.0` | 2026-04-02 |
+| Metabase | 0.51.7 | `metabase/metabase:v0.51.7` | 2026-04-03 |
+| Prometheus | 3.2.1 | `prom/prometheus:v3.2.1` | 2026-04-02 |
+| Alertmanager | 0.28.1 | `prom/alertmanager:v0.28.1` | 2026-04-02 |
+| Loki | 3.4.2 | `grafana/loki:3.4.2` | 2026-04-02 |
+| Redis | 7.x | `redis:7-alpine` | 2026-04-02 |
+| dbt-core | 1.11.x | Custom build (`transformations/Dockerfile`) | 2026-04-02 |
+| dbt-duckdb | 1.10.x | Custom build (`transformations/Dockerfile`) | 2026-04-02 |
+
+## Verification Checklist
+
+When answering a question about a specific tool:
+
+- [ ] Identify which version is running (check table above or run `docker ps`)
+- [ ] Find the official documentation **for that version** (e.g., `docs.open-metadata.org/v1.12.x`)
+- [ ] Cross-reference UI paths, API endpoints, and terminology with the versioned docs
+- [ ] If the docs URL has a version selector, use it (e.g., `/v1.12.x/` not `/latest/`)
+- [ ] If unsure, search the web for `"<tool> <version> <feature>"` before answering
+
+## Documentation URL Patterns
+
+| Tool | Versioned Docs URL |
+|---|---|
+| OpenMetadata | `https://docs.open-metadata.org/v1.12.x/` |
+| Apache Airflow | `https://airflow.apache.org/docs/apache-airflow/3.0.0/` |
+| dbt-core | `https://docs.getdbt.com/docs/` |
+| Grafana | `https://grafana.com/docs/grafana/v12.4/` |
+| Prometheus | `https://prometheus.io/docs/prometheus/3.2/` |
+| MinIO | `https://min.io/docs/minio/linux/` |
+
+## OM 1.12.x Terminology Changes
+
+These are **breaking changes** in OM 1.12.x compared to earlier documentation:
+
+| Old Term (pre-1.12) | New Term (1.12.x) | Where |
+|---|---|---|
+| Ingestion tab | **Agents** tab | Service page |
+| Add Ingestion | **Add Agent** | Service page → Agents tab |
+| Add Metadata Ingestion | **Add Metadata Agent** | Service page → Agents tab |
+| Add Profiler Ingestion | **Add Profiler Agent** | Service page → Agents tab |
+| Add dbt Ingestion | **Add dbt Agent** | Service page → Agents tab |
+| Ingestion Pipeline | **Agent** | Throughout the UI |
+| Profiler tab (on table) | **Data Observability** tab | Table page |
+| Data Quality tab (on table) | **Data Observability** → **Data Quality** sub-tab | Table page |
+| Activity Feed tab | **Activity Feeds & Tasks** tab | Table page |
+
+## OM 1.12.3 Table Page Tabs (verified)
+
+Main tabs: `Columns` | `Activity Feeds & Tasks` | `Sample Data` | `Queries` | `Data Observability` | `Lineage` | `Contract` | `Custom Properties`
+
+Data Observability sub-tabs: `Table Profile` | `Column Profile` | `Data Quality` | `Incidents`
+
+## Update Protocol
+
+After verifying a version or discovering a version-specific behavior:
+1. Update the version table in this file
+2. Update `knowledge-base.mdc` if a new pitfall was discovered
+3. Update any guide (e.g., `GUIDE_OPENMETADATA.md`) with correct paths/terminology

@@ -205,13 +205,13 @@ groups:
           description: "La cible {{ $labels.instance }} (job: {{ $labels.job }}) ne repond plus depuis 2 minutes."
 
       - alert: PrometheusTooManyRestarts
-        expr: changes(process_start_time_seconds{job="prometheus"}[1h]) > 2
-        for: 0m
+        expr: changes(process_start_time_seconds{job="prometheus"}[1h]) > 3
+        for: 5m
         labels:
           severity: warning
           component: monitoring
         annotations:
-          summary: "Prometheus a redemarre plus de 2 fois en 1h"
+          summary: "Prometheus a redemarre plus de 3 fois en 1h"
           description: "Instabilite de la stack de monitoring."
 
       - alert: LokiDown

@@ -36,6 +36,16 @@ joined as (
     left join weather_conditions w
         on s._dlt_id = w._dlt_parent_id
         and w._dlt_list_idx = 0
+),
+
+quality_checked as (
+    select *
+    from joined
+    where city_name is not null
+      and temperature_celsius is not null
+      and measured_at is not null
+      and temperature_celsius between -90 and 60
+      and (humidity_percent is null or humidity_percent between 0 and 100)
 )
 
-select * from joined
+select * from quality_checked

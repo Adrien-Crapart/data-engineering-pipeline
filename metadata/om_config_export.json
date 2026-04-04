@@ -1,0 +1,101 @@
+{
+  "exported_at": "2026-04-02T14:48:56Z",
+  "tables": {
+    "fct_weather_observation": {
+      "id": "5e728ec4-800a-4993-98ce-f3208dd6324a",
+      "fqn": "datawarehouse.datawarehouse.core.fct_weather_observation",
+      "description": "Canonical fact table for individual weather observations. One row per city per extraction.",
+      "tags": [
+        "DataDomain.Meteorology",
+        "DataLayer.Gold",
+        "DataSensitivity.Public",
+        "Tier.Tier1",
+        "UpdateFrequency.Hourly"
+      ],
+      "owners": [
+        "data-engineering"
+      ],
+      "domain": null
+    },
+    "dim_city": {
+      "id": "3f85c417-8300-488c-8909-5ed8d946142f",
+      "fqn": "datawarehouse.datawarehouse.core.dim_city",
+      "description": "Conformed city dimension. Deduplicates city metadata into a single authoritative reference.",
+      "tags": [
+        "DataDomain.Geography",
+        "DataLayer.Gold",
+        "DataSensitivity.Public",
+        "Tier.Tier1",
+        "UpdateFrequency.Weekly"
+      ],
+      "owners": [
+        "data-engineering"
+      ],
+      "domain": null
+    },
+    "weather_daily_summary": {
+      "id": "4003897f-cd5e-4fb4-91ca-8b9b43fc455d",
+      "fqn": "datawarehouse.datawarehouse.mart.weather_daily_summary",
+      "description": "Daily weather summary per city. Aggregates observations and forecasts into daily min/max/avg.",
+      "tags": [
+        "DataDomain.Meteorology",
+        "DataLayer.Gold",
+        "DataSensitivity.Public",
+        "Tier.Tier2",
+        "UpdateFrequency.Daily"
+      ],
+      "owners": [
+        "data-analytics"
+      ],
+      "domain": null
+    },
+    "city_weather_metrics": {
+      "id": "98fdebb3-a4b1-4760-8029-405b7ffb1ce7",
+      "fqn": "datawarehouse.datawarehouse.mart.city_weather_metrics",
+      "description": "Aggregated weather metrics per city across all available data for city comparison dashboards.",
+      "tags": [
+        "DataDomain.Analytics",
+        "DataLayer.Gold",
+        "DataSensitivity.Public",
+        "Tier.Tier2",
+        "UpdateFrequency.Daily"
+      ],
+      "owners": [
+        "data-analytics"
+      ],
+      "domain": null
+    },
+    "weather_trend_analysis": {
+      "id": "8c7ab2de-c905-4f45-88a0-cfa68350fcc0",
+      "fqn": "datawarehouse.datawarehouse.analytic.weather_trend_analysis",
+      "description": "Rolling 7-day weather trend analysis per city with moving averages for temperature, humidity, and wind.",
+      "tags": [
+        "DataDomain.Analytics",
+        "DataLayer.Gold",
+        "DataSensitivity.Internal",
+        "Tier.Tier3",
+        "UpdateFrequency.Daily"
+      ],
+      "owners": [
+        "data-analytics"
+      ],
+      "domain": null
+    },
+    "city_comparison_ranking": {
+      "id": "c5a96676-c3bb-423d-891c-7b2495fba7a5",
+      "fqn": "datawarehouse.datawarehouse.analytic.city_comparison_ranking",
+      "description": "Cross-city ranking on multiple weather dimensions for comparative analysis.",
+      "tags": [
+        "DataDomain.Analytics",
+        "DataLayer.Gold",
+        "DataSensitivity.Internal",
+        "Tier.Tier3",
+        "UpdateFrequency.Daily"
+      ],
+      "owners": [
+        "data-analytics"
+      ],
+      "domain": null
+    }
+  }
+}

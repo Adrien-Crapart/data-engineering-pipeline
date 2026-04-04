@@ -26,7 +26,9 @@ CONN_SMTP = "smtp_default"
 # ---------------------------------------------------------------------------
 # Asset URIs (shared between producer / consumer DAGs)
 # ---------------------------------------------------------------------------
-ASSET_RAW_WEATHER_S3 = "s3://weather-data-lake/raw/openweather"
+ASSET_RAW_WEATHER_S3 = "s3://data-lake/raw/openweather"
+ASSET_STAGING_WEATHER = "pg://datawarehouse/staging/stg_weather_current"
+ASSET_STAGING_VALIDATED = "pg://datawarehouse/staging/validated"
 ASSET_MART_WEATHER = "pg://datawarehouse/mart/weather_daily_summary"
 
 # ---------------------------------------------------------------------------

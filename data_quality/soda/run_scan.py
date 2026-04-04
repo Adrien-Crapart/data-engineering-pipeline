@@ -34,8 +34,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SCAN_CONFIGS = {
     "staging": {
-        "config": os.path.join(BASE_DIR, "configuration.yml"),
+        "config": os.path.join(BASE_DIR, "configuration_staging.yml"),
         "checks": os.path.join(BASE_DIR, "checks", "staging_checks.yml"),
+    },
+    "core": {
+        "config": os.path.join(BASE_DIR, "configuration_core.yml"),
+        "checks": os.path.join(BASE_DIR, "checks", "core_checks.yml"),
     },
     "mart": {
         "config": os.path.join(BASE_DIR, "configuration_mart.yml"),
@@ -63,7 +67,7 @@ def _get_minio() -> Minio | None:
 
 
 def _upload(client: Minio, key: str, data: bytes, content_type: str) -> None:
-    bucket = os.getenv("MINIO_BUCKET_NAME", "weather-data-lake")
+    bucket = os.getenv("MINIO_BUCKET_NAME", "data-lake")
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
     client.put_object(
@@ -167,7 +171,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     parser = argparse.ArgumentParser(description="Run Soda scans with S3 report upload")
-    parser.add_argument("--layer", choices=["staging", "mart", "all"], default="all")
+    parser.add_argument(
+        "--layer", choices=["staging", "core", "mart", "all"], default="all"
+    )
     args = parser.parse_args()
 
     minio = _get_minio()

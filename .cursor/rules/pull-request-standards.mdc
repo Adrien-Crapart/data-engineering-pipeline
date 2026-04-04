@@ -1,0 +1,119 @@
+---
+description: Pull request standards adapted for data engineering — sizing, structure, review strategy
+alwaysApply: true
+---
+
+# Pull Request Standards (Data Engineering)
+
+## Core Principle
+
+> A PR must be **functionally cohesive and reviewable** — not artificially small.
+
+In data engineering, a single feature often spans 20+ files across DAGs, dbt models, SQL,
+quality checks, and config. Splitting artificially breaks pipeline coherence and creates
+unreviewable partial states.
+
+## PR Sizing Guidelines
+
+| Metric | Target | Hard Limit |
+|--------|--------|------------|
+| Lines changed (diff) | < 500 | 1500 max |
+| Files changed | no strict limit | — |
+| Review time | < 45 min | 90 min max |
+| Scope | 1 functional unit | never mix feature + refactor |
+
+- **Lines changed** is the primary metric, NOT file count.
+- A 30-file PR with 400 lines of dbt models is fine.
+- A 5-file PR with 2000 lines of tangled logic is not.
+
+Sources: Microsoft Research "Influence of Change Size on Code Review",
+Google Engineering Practices, Accelerate (Forsgren/Humble/Kim).
+
+## PR = One Functional Unit
+
+Each PR must represent exactly **one** of:
+
+- A complete pipeline (ingestion → staging → core → DAG)
+- A complete feature within an existing pipeline
+- A bugfix with its regression test
+- A pure refactor (no behavior change)
+- Infrastructure/config changes only
+
+### Never Mix in a Single PR
+
+- ❌ Feature + refactor
+- ❌ Bugfix + new feature
+- ❌ Multiple unrelated pipelines
+- ❌ Schema migration + business logic
+
+## Smart Splitting Strategy
+
+When a feature exceeds ~1500 lines, split **by layer** (each PR must be independently mergeable):
+
+```
+PR 1: sources + staging models (Bronze → Silver)
+PR 2: core + mart models (Gold)
+PR 3: orchestration DAG + quality checks
+PR 4: documentation + monitoring
+```
+
+Only split if each PR is **testable and deployable independently**.
+If splitting breaks pipeline coherence → keep as one PR.
+
+## PR Description Template
+
+Every PR MUST include:
+
+```markdown
+## Summary
+What this PR does and why (1-3 sentences).
+
+## Pipeline Impact
+- Layers affected: [staging / core / mart / orchestration]
+- New/modified models: [list]
+- DAG changes: [yes/no — describe if yes]
+
+## Data Flow
+Brief description or ASCII diagram of the data path affected.
+
+## Review Strategy
+Suggested review order (follow commit layering):
+1. Start with: [staging models / config]
+2. Then: [core transformations]
+3. Finally: [DAG orchestration / tests]
+
+## Testing
+- [ ] dbt build passes (`just dbt-build`)
+- [ ] Quality checks pass (GX + Soda)
+- [ ] DAG parses without error
+- [ ] Docker images build if infra changed
+
+## Breaking Changes
+None / [describe impact and migration steps]
+```
+
+## Commit Layering in PRs
+
+Commits inside a PR MUST follow the layering defined in `git-workflow.mdc`:
+infrastructure → sources → staging → core → DAG → tests → docs.
+
+Reviewers read **commit by commit**, not the full diff.
+This is the primary mechanism that makes large data PRs reviewable.
+
+## Review Protocol
+
+- Reviewer reads commits in order (not full diff).
+- SQL models: check logic correctness + schema alignment.
+- DAG changes: check task dependencies + asset emissions.
+- Quality checks: verify they target the right schema/tables.
+- Approve per-layer if the PR is large.
+
+## What Triggers a Mandatory PR
+
+- Any change to `orchestration/dags/`
+- Any change to `transformations/models/`
+- Any change to `infrastructure/docker/`
+- Any change to `data_quality/`
+- Any change to `ingestion/`
+
+Config-only changes (`.env.example`, `variables.json.example`) can go direct if trivial.

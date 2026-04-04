@@ -1,0 +1,79 @@
+version: 2
+
+models:
+  - name: weather_trend_analysis
+    description: >
+      Rolling 7-day weather trend analysis per city. Calculates moving
+      averages for temperature, humidity, and wind speed to identify
+      patterns and anomalies over time.
+    config:
+      tags: ["analytic", "weather", "gold"]
+    tests:
+      - elementary.schema_changes
+    columns:
+      - name: city_name
+        description: City name for the trend analysis.
+        tests:
+          - not_null
+      - name: date_day
+        description: Calendar date of the daily observation.
+        tests:
+          - not_null
+      - name: avg_temperature_celsius
+        description: Average temperature for the day in Celsius.
+      - name: avg_humidity_percent
+        description: Average humidity for the day as percentage.
+      - name: avg_wind_speed_ms
+        description: Average wind speed for the day in m/s.
+      - name: observation_count
+        description: Number of observations aggregated for the day.
+      - name: temp_7d_moving_avg
+        description: 7-day rolling average temperature in Celsius.
+      - name: humidity_7d_moving_avg
+        description: 7-day rolling average humidity percentage.
+      - name: wind_7d_moving_avg
+        description: 7-day rolling average wind speed in m/s.
+      - name: temp_day_over_day_change
+        description: Temperature change from previous day in Celsius. Null for first day.
+
+  - name: city_comparison_ranking
+    description: >
+      Cross-city ranking and comparison on multiple weather dimensions.
+      Ranks cities by temperature, humidity, wind speed, and data
+      completeness for comparative analysis dashboards.
+    config:
+      tags: ["analytic", "weather", "gold"]
+    tests:
+      - elementary.schema_changes
+    columns:
+      - name: city_name
+        description: City name.
+        tests:
+          - not_null
+          - unique
+      - name: country_code
+        description: ISO 3166-1 alpha-2 country code.
+      - name: avg_temperature_celsius
+        description: Overall average temperature in Celsius.
+      - name: avg_humidity_percent
+        description: Overall average humidity percentage.
+      - name: avg_wind_speed_ms
+        description: Overall average wind speed in m/s.
+      - name: total_observations
+        description: Total number of weather records for this city.
+      - name: first_observation
+        description: Earliest observation timestamp.
+      - name: last_observation
+        description: Most recent observation timestamp.
+      - name: temp_rank_warmest
+        description: Rank by temperature (1 = warmest city).
+      - name: temp_rank_coldest
+        description: Rank by temperature (1 = coldest city).
+      - name: humidity_rank
+        description: Rank by humidity (1 = most humid city).
+      - name: wind_rank
+        description: Rank by wind speed (1 = windiest city).
+      - name: data_completeness_rank
+        description: Rank by number of observations (1 = most data).
+      - name: temp_vs_mean
+        description: Temperature deviation from the mean of all cities in Celsius.

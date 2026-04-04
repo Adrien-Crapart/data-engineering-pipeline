@@ -7,8 +7,8 @@ networks:
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: postgres
-    restart: always
+    container_name: postgres_data_warehouse
+    restart: unless-stopped
     networks:
       - pipeline-network
     environment:
@@ -17,10 +17,19 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
     ports:
       - "5432:5432"
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "pg_stat_statements.max=10000"
+      - "-c"
+      - "pg_stat_statements.track=all"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./infrastructure/scripts/00_create_roles.sql:/docker-entrypoint-initdb.d/00_create_roles.sql
       - ./infrastructure/scripts/01_create_databases.sql:/docker-entrypoint-initdb.d/01_create_databases.sql
+      - ./infrastructure/scripts/02_enable_extensions.sql:/docker-entrypoint-initdb.d/02_enable_extensions.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-postgres}"]
       interval: 10s
@@ -36,8 +45,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: redis
-    restart: always
+    container_name: redis_data_warehouse
+    restart: unless-stopped
     networks:
       - pipeline-network
     ports:

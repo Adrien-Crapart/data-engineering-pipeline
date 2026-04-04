@@ -1,0 +1,86 @@
+version: 2
+
+models:
+  - name: fct_weather_observation
+    description: >
+      Canonical fact table for individual weather observations.
+      One row per city per extraction timestamp. Contains cleaned,
+      typed, and enriched current weather readings from OpenWeather API.
+    config:
+      tags: ["core", "weather", "gold"]
+    tests:
+      - elementary.volume_anomalies:
+          timestamp_column: measured_at
+      - elementary.schema_changes
+    columns:
+      - name: row_id
+        description: Unique row identifier from DLT pipeline.
+        tests:
+          - unique
+          - not_null
+      - name: city_name
+        description: City name returned by OpenWeather API.
+        tests:
+          - not_null
+      - name: country_code
+        description: ISO 3166-1 alpha-2 country code.
+        tests:
+          - not_null
+      - name: temperature_celsius
+        description: Current air temperature in degrees Celsius.
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "temperature_celsius between -90 and 60"
+      - name: feels_like_celsius
+        description: Perceived temperature accounting for wind chill and humidity.
+      - name: humidity_percent
+        description: Relative humidity percentage (0-100).
+      - name: pressure_hpa
+        description: Atmospheric pressure at sea level in hectopascals (hPa).
+      - name: wind_speed_ms
+        description: Wind speed in meters per second.
+      - name: weather_condition
+        description: Main weather condition group (e.g. Clear, Rain, Clouds).
+      - name: weather_description
+        description: Detailed weather description (e.g. "light rain", "overcast clouds").
+      - name: cloud_coverage_percent
+        description: Cloud coverage percentage (0-100).
+      - name: visibility_meters
+        description: Visibility distance in meters. Max 10000.
+      - name: measured_at
+        description: Timestamp of the observation in UTC.
+        tests:
+          - not_null
+      - name: load_id
+        description: DLT load identifier for data lineage tracking.
+      - name: loaded_at
+        description: Timestamp when the record was loaded by DLT.
+
+  - name: dim_city
+    description: >
+      Conformed city dimension table. Deduplicates city metadata from
+      weather observations into a single authoritative reference.
+      One row per unique city.
+    config:
+      tags: ["core", "reference", "gold"]
+    tests:
+      - elementary.schema_changes
+    columns:
+      - name: city_name
+        description: Canonical city name. Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: country_code
+        description: ISO 3166-1 alpha-2 country code.
+        tests:
+          - not_null
+      - name: latitude
+        description: Geographic latitude in decimal degrees.
+        tests:
+          - not_null
+      - name: longitude
+        description: Geographic longitude in decimal degrees.
+        tests:
+          - not_null

@@ -6,16 +6,18 @@ networks:
 
 services:
   openmetadata-elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.16.6
-    container_name: openmetadata-elasticsearch
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.2
+    container_name: openmetadata_elasticsearch_metadata
+    restart: unless-stopped
     networks:
       - pipeline-network
     environment:
       discovery.type: single-node
-      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
       xpack.security.enabled: "false"
     ports:
       - "9200:9200"
+      - "9300:9300"
     volumes:
       - openmetadata-es-data:/usr/share/elasticsearch/data
     healthcheck:
@@ -26,68 +28,88 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
           cpus: "1.00"
         reservations:
-          memory: 512M
+          memory: 1G
 
   execute-migrate-all:
     image: docker.getcollate.io/openmetadata/server:${OM_SERVER_VERSION:-1.12.3}
-    container_name: execute_migrate_all
+    container_name: execute_migrate_all_metadata
+    restart: "no"
     networks:
       - pipeline-network
     command: "./bootstrap/openmetadata-ops.sh migrate"
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+          cpus: "1.00"
+        reservations:
+          memory: 768M
     environment:
       OPENMETADATA_CLUSTER_NAME: ${OM_CLUSTER_NAME:-openmetadata}
       SERVER_PORT: "8585"
       SERVER_ADMIN_PORT: "8586"
       LOG_LEVEL: ${OM_LOG_LEVEL:-INFO}
       MIGRATION_LIMIT_PARAM: "1200"
-      AUTHENTICATION_PROVIDER: ${OM_AUTH_PROVIDER:-basic}
-      AUTHENTICATION_PUBLIC_KEYS: ${OM_AUTH_PUBLIC_KEYS:-[http://localhost:8585/api/v1/system/config/jwks]}
+      # Authentication
       AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
       AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
       AUTHORIZER_ADMIN_PRINCIPALS: ${OM_ADMIN_PRINCIPALS:-[admin]}
+      AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN: '["all"]'
       AUTHORIZER_INGESTION_PRINCIPALS: ${OM_INGESTION_PRINCIPALS:-[ingestion-bot]}
       AUTHORIZER_PRINCIPAL_DOMAIN: "open-metadata.org"
       AUTHORIZER_ENFORCE_PRINCIPAL_DOMAIN: "false"
       AUTHORIZER_ENABLE_SECURE_SOCKET: "false"
+      AUTHENTICATION_PROVIDER: ${OM_AUTH_PROVIDER:-basic}
+      AUTHENTICATION_PUBLIC_KEYS: ${OM_AUTH_PUBLIC_KEYS:-[http://localhost:8585/api/v1/system/config/jwks]}
       AUTHENTICATION_ENABLE_SELF_SIGNUP: "true"
       AUTHENTICATION_CLIENT_TYPE: "public"
+      # JWT
       RSA_PUBLIC_KEY_FILE_PATH: "./conf/public_key.der"
       RSA_PRIVATE_KEY_FILE_PATH: "./conf/private_key.der"
       JWT_ISSUER: "open-metadata.org"
       JWT_KEY_ID: "Gb389a-9f76-gdjs-a92j-0242bk94356"
+      # Pipeline service
       PIPELINE_SERVICE_CLIENT_ENDPOINT: http://openmetadata-ingestion:8080
       PIPELINE_SERVICE_CLIENT_HEALTH_CHECK_INTERVAL: "300"
       SERVER_HOST_API_URL: http://openmetadata-server:8585/api
       PIPELINE_SERVICE_CLIENT_VERIFY_SSL: "no-ssl"
       PIPELINE_SERVICE_CLIENT_SSL_CERT_PATH: ""
+      PIPELINE_SERVICE_CLIENT_ENABLED: "true"
       PIPELINE_SERVICE_CLIENT_CLASS_NAME: "org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient"
+      # Airflow
       AIRFLOW_USERNAME: ${OM_AIRFLOW_USERNAME:-admin}
       AIRFLOW_PASSWORD: ${OM_AIRFLOW_PASSWORD:-admin}
       FERNET_KEY: ${OM_FERNET_KEY:-jJ/9sz0g0OHxsfxOoSfdFdmk3ysNmPRnH3TUAbz3IHA=}
+      # PostgreSQL
       DB_DRIVER_CLASS: org.postgresql.Driver
       DB_SCHEME: postgresql
       DB_PARAMS: "allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC"
+      DB_USE_SSL: "false"
       DB_USER: ${OM_DB_USER:-openmetadata_user}
       DB_USER_PASSWORD: ${OM_DB_PASSWORD:-openmetadata_password}
       DB_HOST: postgres
       DB_PORT: "5432"
-      OM_DATABASE: ${OM_DATABASE:-openmetadata}
+      OM_DATABASE: ${OM_DATABASE:-openmetadata_db}
+      # Elasticsearch
       ELASTICSEARCH_HOST: openmetadata-elasticsearch
       ELASTICSEARCH_PORT: "9200"
       ELASTICSEARCH_SCHEME: http
       SEARCH_TYPE: "elasticsearch"
+      # Secrets
       SECRET_MANAGER: db
       OPENMETADATA_HEAP_OPTS: "-Xmx1G -Xms1G"
     depends_on:
       openmetadata-elasticsearch:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   openmetadata-server:
     image: docker.getcollate.io/openmetadata/server:${OM_SERVER_VERSION:-1.12.3}
-    container_name: openmetadata_server
+    container_name: openmetadata_server_metadata
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -96,21 +118,25 @@ services:
       SERVER_PORT: "8585"
       SERVER_ADMIN_PORT: "8586"
       LOG_LEVEL: ${OM_LOG_LEVEL:-INFO}
-      AUTHENTICATION_PROVIDER: ${OM_AUTH_PROVIDER:-basic}
-      AUTHENTICATION_PUBLIC_KEYS: ${OM_AUTH_PUBLIC_KEYS:-[http://localhost:8585/api/v1/system/config/jwks]}
-      AUTHENTICATION_ENABLE_SELF_SIGNUP: "true"
-      AUTHENTICATION_CLIENT_TYPE: "public"
+      # Authentication
       AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
       AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
       AUTHORIZER_ADMIN_PRINCIPALS: ${OM_ADMIN_PRINCIPALS:-[admin]}
+      AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN: '["all"]'
       AUTHORIZER_INGESTION_PRINCIPALS: ${OM_INGESTION_PRINCIPALS:-[ingestion-bot]}
       AUTHORIZER_PRINCIPAL_DOMAIN: "open-metadata.org"
       AUTHORIZER_ENFORCE_PRINCIPAL_DOMAIN: "false"
       AUTHORIZER_ENABLE_SECURE_SOCKET: "false"
+      AUTHENTICATION_PROVIDER: ${OM_AUTH_PROVIDER:-basic}
+      AUTHENTICATION_PUBLIC_KEYS: ${OM_AUTH_PUBLIC_KEYS:-[http://localhost:8585/api/v1/system/config/jwks]}
+      AUTHENTICATION_ENABLE_SELF_SIGNUP: "true"
+      AUTHENTICATION_CLIENT_TYPE: "public"
+      # JWT
       RSA_PUBLIC_KEY_FILE_PATH: "./conf/public_key.der"
       RSA_PRIVATE_KEY_FILE_PATH: "./conf/private_key.der"
       JWT_ISSUER: "open-metadata.org"
       JWT_KEY_ID: "Gb389a-9f76-gdjs-a92j-0242bk94356"
+      # Pipeline service
       PIPELINE_SERVICE_CLIENT_ENDPOINT: http://openmetadata-ingestion:8080
       PIPELINE_SERVICE_CLIENT_HEALTH_CHECK_INTERVAL: "300"
       SERVER_HOST_API_URL: http://openmetadata-server:8585/api
@@ -118,26 +144,32 @@ services:
       PIPELINE_SERVICE_CLIENT_SSL_CERT_PATH: ""
       PIPELINE_SERVICE_CLIENT_ENABLED: "true"
       PIPELINE_SERVICE_CLIENT_CLASS_NAME: "org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient"
+      # Airflow
       AIRFLOW_USERNAME: ${OM_AIRFLOW_USERNAME:-admin}
       AIRFLOW_PASSWORD: ${OM_AIRFLOW_PASSWORD:-admin}
       AIRFLOW_TIMEOUT: "10"
       FERNET_KEY: ${OM_FERNET_KEY:-jJ/9sz0g0OHxsfxOoSfdFdmk3ysNmPRnH3TUAbz3IHA=}
+      # PostgreSQL
       DB_DRIVER_CLASS: org.postgresql.Driver
       DB_SCHEME: postgresql
       DB_PARAMS: "allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC"
+      DB_USE_SSL: "false"
       DB_USER: ${OM_DB_USER:-openmetadata_user}
       DB_USER_PASSWORD: ${OM_DB_PASSWORD:-openmetadata_password}
       DB_HOST: postgres
       DB_PORT: "5432"
-      OM_DATABASE: ${OM_DATABASE:-openmetadata}
+      OM_DATABASE: ${OM_DATABASE:-openmetadata_db}
+      # Elasticsearch
       ELASTICSEARCH_HOST: openmetadata-elasticsearch
       ELASTICSEARCH_PORT: "9200"
       ELASTICSEARCH_SCHEME: http
       SEARCH_TYPE: "elasticsearch"
-      SECRET_MANAGER: db
+      # Monitoring
       EVENT_MONITOR: prometheus
       EVENT_MONITOR_BATCH_SIZE: "10"
-      OPENMETADATA_HEAP_OPTS: "-Xmx1G -Xms1G"
+      # Secrets
+      SECRET_MANAGER: db
+      OPENMETADATA_HEAP_OPTS: "-Xmx2G -Xms2G"
       MASK_PASSWORDS_API: "false"
     ports:
       - "8585:8585"
@@ -154,14 +186,14 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1536M
-          cpus: "1.00"
+          memory: 2560M
+          cpus: "1.50"
         reservations:
-          memory: 1G
+          memory: 1536M
 
   openmetadata-ingestion:
     image: docker.getcollate.io/openmetadata/ingestion:${OM_SERVER_VERSION:-1.12.3}
-    container_name: openmetadata_ingestion
+    container_name: openmetadata_ingestion_metadata
     restart: unless-stopped
     networks:
       - pipeline-network
@@ -181,6 +213,10 @@ services:
     ports:
       - "8086:8080"
     depends_on:
+      openmetadata-elasticsearch:
+        condition: service_started
+      postgres:
+        condition: service_healthy
       openmetadata-server:
         condition: service_started
     volumes:
@@ -196,10 +232,10 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: "1.00"
+          memory: 3G
+          cpus: "1.50"
         reservations:
-          memory: 1G
+          memory: 2G
 
 volumes:
   openmetadata-es-data:

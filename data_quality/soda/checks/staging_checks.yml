@@ -1,9 +1,9 @@
-# Soda Core checks for core layer (dbt-duckdb writes to PG via ATTACH).
-# Staging views live in DuckDB (not PG), so we check the core fact/dim tables instead.
+# Soda Core checks for staging layer (silver - cleaned data in PostgreSQL).
+# Post-staging business rule validation before promotion to core/mart.
 
-checks for fct_weather_observation:
+checks for stg_weather_current:
   - row_count > 0:
-      name: Core fact table has data
+      name: Staging current weather has data
   - missing_count(city_name) = 0:
       name: No missing city names
   - missing_count(temperature_celsius) = 0:
@@ -11,20 +11,30 @@ checks for fct_weather_observation:
   - missing_count(measured_at) = 0:
       name: No missing measurement timestamps
   - invalid_count(temperature_celsius) = 0:
-      name: Temperature is numeric
+      name: Temperature within physical range
       valid min: -90
       valid max: 60
   - invalid_count(humidity_percent) = 0:
       name: Humidity within valid range
       valid min: 0
       valid max: 100
-  - freshness(measured_at) < 2d:
-      name: Data is fresh (within 2 days)
+  - freshness(measured_at) < 7d:
+      name: Current weather data is fresh
+  - duplicate_count(row_id) = 0:
+      name: No duplicate rows
 
-checks for dim_city:
+checks for stg_weather_forecast:
   - row_count > 0:
-      name: Dimension city has data
+      name: Staging forecast has data
   - missing_count(city_name) = 0:
-      name: No missing city names in dim
-  - duplicate_count(city_name) = 0:
-      name: No duplicate cities
+      name: No missing city names in forecast
+  - missing_count(temperature_celsius) = 0:
+      name: No missing forecast temperatures
+  - missing_count(forecast_at) = 0:
+      name: No missing forecast timestamps
+  - invalid_count(temperature_celsius) = 0:
+      name: Forecast temperature within range
+      valid min: -90
+      valid max: 60
+  - duplicate_count(row_id) = 0:
+      name: No duplicate forecast rows

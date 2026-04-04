@@ -19,7 +19,7 @@ extract_weather → dbt_deps → dbt_run → dbt_test → soda_scan → elementa
 
 Runs in the dlt container. For each city in `WEATHER_CITIES`:
 - Validates data against YAML contracts (`weather_current`, `weather_forecast`)
-- Archives raw JSON response to MinIO data lake (`s3://weather-data-lake/raw/...`)
+- Archives raw JSON response to MinIO data lake (`s3://data-lake/raw/...`)
 - Loads structured data into `raw.weather_current` and `raw.weather_forecast`
 
 **Mounts:** `ingestion/`, `contracts/`

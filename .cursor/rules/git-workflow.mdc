@@ -1,5 +1,5 @@
 ---
-description: Git workflow — branching strategy, conventional commits, pre-merge requirements
+description: Git workflow — branching, commit layering, conventional commits, merge strategy
 globs: [".github/**", ".git/**"]
 alwaysApply: false
 ---
@@ -9,29 +9,70 @@ alwaysApply: false
 ## Branching Strategy
 
 - **Never** commit directly to `master` or `main`.
-- Use feature branches: `feat/<component-name>` or `feat--<component-name>`.
-- Use fix branches: `fix/<issue-description>`.
-- Each branch must implement or fix **one** logical component.
+- Feature branches: `feat/<component-name>` (e.g. `feat/quality-gate-pipeline`).
+- Fix branches: `fix/<issue-description>` (e.g. `fix/soda-staging-config`).
+- Refactor branches: `refactor/<scope>` (e.g. `refactor/dbt-materialization`).
+- Each branch = **one functional unit** (one pipeline, one feature, one fix).
 
-## Commit Messages
+## Conventional Commits
 
-- Use **conventional commits** format:
-  - `feat(<scope>): <description>` for new features.
-  - `fix(<scope>): <description>` for bug fixes.
-  - `docs(<scope>): <description>` for documentation changes.
-  - `refactor(<scope>): <description>` for refactoring.
-  - `test(<scope>): <description>` for test additions.
-  - `chore(<scope>): <description>` for maintenance tasks.
+Format: `type(scope): description`
+
+| Type | Usage |
+|------|-------|
+| `feat` | New feature or pipeline |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `refactor` | Code restructuring, no behavior change |
+| `test` | Adding or updating tests |
+| `chore` | Maintenance, deps, CI config |
+
+- **Scope** = affected layer or component (e.g. `dbt`, `airflow`, `soda`, `ingestion`, `infra`).
+- Description in **imperative mood**, lowercase, no period (e.g. `add staging quarantine model`).
+- Max 72 characters for the subject line.
+
+## Commit Layering (Data Engineering)
+
+Structure commits by architectural layer, **bottom-up through the pipeline**:
+
+```
+commit 1 → infrastructure / config changes
+commit 2 → sources / ingestion (Bronze)
+commit 3 → staging models (Silver)
+commit 4 → quarantine models
+commit 5 → core / mart models (Gold)
+commit 6 → orchestration (Airflow DAGs)
+commit 7 → quality checks (GX / Soda)
+commit 8 → tests
+commit 9 → documentation
+```
+
+Each commit must be:
+- **Atomic**: one logical change
+- **Buildable**: doesn't break the pipeline at that point
+- **Descriptive**: reviewer can understand the layer from the message
+
+Example for a new pipeline feature:
+
+```
+feat(dbt): add staging source for weather_forecast
+feat(dbt): add stg_weather_forecast model with quarantine
+feat(dbt): add fct_weather_forecast core model
+feat(airflow): add forecast ingestion task to DAG
+test(dbt): add schema tests for forecast models
+docs(pipeline): update pipeline.md with forecast flow
+```
 
 ## Pre-Merge Requirements
 
-1. All tests must pass (`just test`).
-2. Linting must pass (`just check`).
-3. Documentation must be updated if the change affects architecture, pipeline flow, or folder structure.
-4. Docker images must build successfully if infrastructure was modified.
-5. Branch must be up to date with `master` before merging.
+1. All tests pass (`just test`).
+2. Linting passes (`just check`).
+3. Documentation updated if architecture, pipeline flow, or folder structure changed.
+4. Docker images build if infrastructure modified.
+5. Branch rebased on `master` (no merge commits from upstream).
 
 ## Merge Strategy
 
-- Merge feature/fix branches into `master` with a merge commit.
-- Merge commit message format: `Merge <branch-name>: <short description>`.
+- **Merge commit** (not squash) to preserve commit layering in history.
+- Merge message: `Merge <branch-name>: <short description>`.
+- Squash only for trivial single-commit branches (typos, config tweaks).

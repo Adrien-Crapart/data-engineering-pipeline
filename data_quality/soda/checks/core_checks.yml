@@ -1,0 +1,29 @@
+# Soda Core checks for core layer (gold - shared business tables).
+
+checks for fct_weather_observation:
+  - row_count > 0:
+      name: Core fact table has data
+  - missing_count(city_name) = 0:
+      name: No missing city names
+  - missing_count(temperature_celsius) = 0:
+      name: No missing temperatures
+  - missing_count(measured_at) = 0:
+      name: No missing measurement timestamps
+  - invalid_count(temperature_celsius) = 0:
+      name: Temperature is numeric
+      valid min: -90
+      valid max: 60
+  - invalid_count(humidity_percent) = 0:
+      name: Humidity within valid range
+      valid min: 0
+      valid max: 100
+  - freshness(measured_at) < 2d:
+      name: Data is fresh (within 2 days)
+
+checks for dim_city:
+  - row_count > 0:
+      name: Dimension city has data
+  - missing_count(city_name) = 0:
+      name: No missing city names in dim
+  - duplicate_count(city_name) = 0:
+      name: No duplicate cities

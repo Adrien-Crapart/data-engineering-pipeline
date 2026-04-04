@@ -3,7 +3,7 @@ version: 2
 # Sources are now read directly from S3 Parquet via DuckDB read_parquet().
 # This file documents the S3 data layout for reference.
 # DLT filesystem destination writes normalized tables as Parquet files:
-#   s3://weather-data-lake/raw/openweather/data/{table_name}/*.parquet
+#   s3://data-lake/raw/openweather/data/{table_name}/*.parquet
 #
 # Tables:
 #   - weather_current              : Current weather observations per city

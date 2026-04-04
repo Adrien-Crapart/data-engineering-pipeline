@@ -29,7 +29,7 @@ Always reuse existing services rather than creating new redundant instances when
 - **API**: `minio:9000`
 - **Console**: `minio:9001`
 - **Credentials**: `minioadmin` / `minioadmin`
-- **Buckets**: `weather-data-lake` (raw data), `airflow-logs` (remote logs)
+- **Buckets**: `data-lake` (raw data), `airflow-logs` (remote logs)
 
 ## What NOT to Do
 

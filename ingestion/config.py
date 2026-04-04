@@ -22,7 +22,7 @@ class PipelineConfig:
     minio_endpoint: str = "minio:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
-    minio_bucket: str = "weather-data-lake"
+    minio_bucket: str = "data-lake"
     minio_secure: bool = False
 
     @classmethod
@@ -54,7 +54,7 @@ class PipelineConfig:
             minio_endpoint=minio_endpoint,
             minio_access_key=os.getenv("MINIO_ROOT_USER", "minioadmin"),
             minio_secret_key=os.getenv("MINIO_ROOT_PASSWORD", "minioadmin"),
-            minio_bucket=os.getenv("MINIO_BUCKET_NAME", "weather-data-lake"),
+            minio_bucket=os.getenv("MINIO_BUCKET_NAME", "data-lake"),
             minio_secure=minio_endpoint_raw.startswith("https://"),
         )
 

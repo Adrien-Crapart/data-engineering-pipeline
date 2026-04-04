@@ -22,4 +22,4 @@ smtp_default:
   conn_type: smtp
   host: mailhog
   port: 1025
-  extra: '{"from_email": "monitoring@weather-pipeline.local"}'
+  extra: '{"from_email": "monitoring@weather-pipeline.local", "disable_ssl": true, "disable_tls": true}'

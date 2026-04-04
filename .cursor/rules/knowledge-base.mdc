@@ -11,10 +11,20 @@ Accumulated best practices and lessons learned from building and debugging this 
 ## Architecture Decisions
 
 ### Medallion Architecture (Bronze → Silver → Gold)
-- **Bronze**: Raw data from API → Parquet on MinIO S3 via DLT filesystem destination. No PG `raw` schema.
-- **Silver**: `staging` — DuckDB views that read S3 Parquet via `read_parquet()`. Not materialized in PG.
+- **Bronze**: Raw data from API → Parquet on MinIO S3 via DLT filesystem destination. Immutable, versioned.
+- **Silver**: `staging` schema in PG — DuckDB reads S3 Parquet, validates, writes to PG via ATTACH. Persisted.
+- **Quarantine**: `staging_quarantine` schema in PG — rejected rows that fail pre-staging validation.
 - **Gold**: `core` (business domain) + `mart` (API/BI-ready) schemas — materialized in PG via DuckDB ATTACH.
-- Quality gates (GX + Soda) run on core/mart tables in PG (not staging, which lives in DuckDB memory).
+- Quality gates: 3 gates total:
+  - **Gate 1** (pre-staging): dbt SQL WHERE filters + dbt tests in-model (schema/types) — runs in ingestion DAG.
+  - **Gate 2** (post-staging): GX + Soda on PG `staging` tables — runs in `quality_gate_pipeline` DAG.
+  - **Gate 3** (post-transformation): GX + Soda on PG `core`/`mart` tables — runs in transformation DAG.
+
+### Event-Driven Asset Chain (3 DAGs)
+- `ingestion_pipeline` → emits `staging_weather` → triggers `quality_gate_pipeline`.
+- `quality_gate_pipeline` → emits `staging_validated` → triggers `transformation_pipeline`.
+- `transformation_pipeline` → emits `mart_weather` → downstream consumers.
+- This chain ensures data is validated at each layer before promotion.
 
 ### dbt with DuckDB (read S3 Parquet + ATTACH PostgreSQL)
 - `profiles.yml` uses `dbt-duckdb` adapter with `:memory:` path.
@@ -27,14 +37,15 @@ Accumulated best practices and lessons learned from building and debugging this 
 - **Key benefit**: DuckDB's columnar engine handles all computation; PG only stores final tables.
 
 ### S3 Raw Layer (Parquet) + PostgreSQL Staging
-- Raw data stored as versioned **Parquet** on MinIO S3 (`s3://weather-data-lake/raw/{source}/year=.../`).
-- Each API response is flattened + the full JSON is embedded in a `raw_json` column.
-- Staging, core, mart schemas live in PostgreSQL (`weather_db` database).
-- DLT loads raw API responses into the `raw` schema of PostgreSQL.
-- The `DataLakeClient.store_raw_parquet()` method logs the full S3 URL of every stored file.
+- Raw data stored as versioned **Parquet** on MinIO S3 (`s3://data-lake/raw/{source}/...`).
+- DLT stores normalized tables as Parquet at `raw/{pipeline}/data/{table_name}/{load_id}.{file_id}.parquet`.
+- Staging models read S3 Parquet via DuckDB `read_parquet()`, filter invalid rows, write valid to PG `staging`.
+- Quarantine models capture invalid rows in PG `staging_quarantine` with `rejection_reason` column.
+- All schemas (`staging`, `staging_quarantine`, `core`, `mart`, `analytic`) live in `datawarehouse` database.
 
 ### Lakehouse Pattern
-- API → JSON on MinIO (raw/immutable) → DLT loads to PG `raw` → dbt transforms to `staging`/`core`/`mart`.
+- API → Parquet on MinIO (raw/immutable) → DuckDB reads Parquet → validates → writes PG staging/quarantine.
+- dbt core/mart transforms read PG staging (via ATTACH) → write PG core/mart.
 - Reports (GX, Soda, dbt docs) are stored on S3 under `_reports/`.
 
 ## Airflow Assets & Event-Driven Scheduling
@@ -105,6 +116,10 @@ Accumulated best practices and lessons learned from building and debugging this 
 ## OpenMetadata Integration
 
 ### OpenMetadata DAG (`openmetadata_ingestion_dag.py`)
+- Registers PostgreSQL, MinIO S3, dbt lineage, OpenLineage pipeline as services in OpenMetadata.
+- Pushes GX/Soda quality results as test suites from S3 reports.
+- Configures medallion layer tags (`bronze`, `silver`, `gold`, `quarantine`) and sensitivity tags.
+- Creates `WeatherDomain` glossary with standardized weather terms.
 - Registers PostgreSQL, MinIO S3, dbt lineage as services in OpenMetadata via REST API.
 - Runs daily at 03:00 Europe/Paris (after all pipelines complete).
 - Uses OpenMetadata API v1 (`/api/v1/services/databaseServices`, etc.).
@@ -132,13 +147,23 @@ Accumulated best practices and lessons learned from building and debugging this 
 - Use `on_failure_callback` at DAG level for alerting.
 - Use `sla_miss_callback` at DAG level for SLA monitoring.
 
-### Two-DAG Architecture
-- **`ingestion_pipeline`**: Extract API → Parquet S3 → PG raw → dbt staging → quality checks (staging).
-- **`transformation_pipeline`**: dbt core/mart/analytic → quality checks (mart) → docs → observability.
+### Three-DAG Architecture (Medallion)
+- **`ingestion_pipeline`**: Extract API → Parquet S3 (bronze) → dbt staging+quarantine → PG staging (silver) → emit `staging_weather`.
+- **`quality_gate_pipeline`**: GX + Soda on PG staging → emit `staging_validated` → triggers transformation.
+- **`transformation_pipeline`**: dbt core/marts/analytic → GX/Soda core+mart checks → docs → emit `mart_weather`.
 - Task IDs describe the action (`extract_weather`, `dbt_run_staging`) not the layer (`bronze_xxx`).
-- dbt `--select staging` / `--select core mart analytic` to scope runs per layer.
-- Quality gates (GX + Soda) run in parallel between layer transitions.
-- Transformation DAG uses Cosmos Docker operators (`DbtRunDockerOperator`, etc.).
+- dbt `--select staging staging_quarantine` in ingestion, `--select staging core marts analytic` in transformation.
+- Quality gates (GX + Soda) run in parallel at each layer transition.
+
+### OpenLineage Integration
+- Airflow OpenLineage provider emits events for every task automatically (no DAG changes needed).
+- Transport: Kafka (`kafka:9092`, topic `openlineage.events`) — configured in `airflow.cfg` `[openlineage]` section.
+- Namespace: `weather-pipeline` — separates events from other producers.
+- `PythonOperator` excluded from OpenLineage events (noisy finalize tasks).
+- dbt lineage: `openlineage-dbt` package + `dbt-ol` wrapper in entrypoint (conditional on `OPENLINEAGE_URL`).
+- Kafka KRaft mode (native in 4.x, no Zookeeper): `compose.lineage.yaml` with `apache/kafka:4.0.0` (official image).
+- `bitnami/kafka:3.9` does NOT exist — always use the official `apache/kafka` image.
+- OpenMetadata consumes OpenLineage events via database lineage pipeline.
 
 ### Cosmos Docker Execution (DbtTaskGroup + ExecutionMode.DOCKER)
 - Airflow is an **orchestrator**, NOT a runner — dbt must execute inside Docker containers, not the worker.
@@ -187,7 +212,7 @@ Accumulated best practices and lessons learned from building and debugging this 
 
 ### dbt Docs Upload to S3
 - `transformations/scripts/upload_docs.py` uploads manifest.json, catalog.json, index.html.
-- Stored under `s3://weather-data-lake/_reports/dbt_docs/`.
+- Stored under `s3://data-lake/_reports/dbt_docs/`.
 
 ## Great Expectations Patterns
 
@@ -199,7 +224,7 @@ Accumulated best practices and lessons learned from building and debugging this 
 - `data_quality/expectations/run_validations.py` is the standalone GX runner.
 - Accepts `--layer staging|mart|all` to scope validations.
 - Creates one datasource per schema (connection string includes `search_path`).
-- Reports uploaded as JSON to `s3://weather-data-lake/_reports/great_expectations/`.
+- Reports uploaded as JSON to `s3://data-lake/_reports/great_expectations/`.
 
 ### GX + Soda Shared Docker Image
 - Both Soda Core and Great Expectations run from `weather-pipeline-soda:1.0.0`.
@@ -366,12 +391,65 @@ ENV PATH="/app/.venv/bin:$PATH"
 | GX/Soda checks fail on staging tables | Staging is DuckDB views (not in PG) after dbt-duckdb migration | Check core/mart tables instead (they're in PG via ATTACH) |
 | DLT raw data not in PG `raw` schema | DLT filesystem destination writes to S3, not PG | dbt-duckdb reads S3 directly via `read_parquet()` — no PG raw needed |
 | `mem_limit` Jinja not rendered | `mem_limit` is NOT a template field in DockerOperator | Use Python constants (e.g. `DEFAULT_DLT_MEM`) instead of `{{ var.value }}` |
+| OM API `fields=customProperties` 400 | OM 1.12.3 uses `extension` not `customProperties` | Use `fields=tags,owners` or `fields=extension` |
+| OM API `fields=domain` 400 | OM 1.12.3 doesn't support `domain` as a fields param on tables | Remove `domain` from fields param |
+| OM `requests.Response` falsy on 4xx | Python `bool(Response)` is `False` for 4xx status codes | Use `resp is not None` instead of `if resp` |
+| OM POST `/tags` deserialization error | `classification` field expects a string (name), not an object | Use `"classification": "DataLayer"` not `{"id":..., "type":...}` |
+| OM domain asset assignment 500/404 | OM 1.12.3 API doesn't support bulk domain→table assignment | Assign tables to domains via UI (table → Domains → Edit) |
 | `image` Jinja not rendered | `image` is NOT a template field in DockerOperator | Use Python constants (e.g. `DEFAULT_SODA_IMAGE`) instead of `{{ var.value }}` |
 | `'mart' does not match any enabled nodes` in dbt | dbt `--select` uses folder names, folder is `marts` (plural) | Use `--select marts` (not `mart`) to match folder name |
+| `Parser Error: syntax error at or near "validated"` in dbt-duckdb | `validated` is a reserved keyword in DuckDB; also missing comma between CTEs | Rename CTE to `quality_checked` and add missing comma after preceding CTE closing paren |
 | `"memory"."staging" does not exist` in dbt build | dbt-duckdb staging tables are ephemeral in-memory; not available in separate sessions | Include `staging` in same dbt run: `run --select staging core marts analytic` |
 | OM ingestion pipeline 400: `airflowConfig must not be null` | OpenMetadata API requires `airflowConfig` field when creating pipelines | Add `"airflowConfig": {"pausePipeline": false, "concurrency": 1, ...}` |
 | OM ingestion container `unhealthy` | Healthcheck uses `/api/v1/health` but embedded Airflow 3.x uses `/api/v2/version` | Change healthcheck to `curl -sf http://localhost:8080/api/v2/version` |
 | OM deploy/trigger pipeline fails | OM `AirflowRESTClient` uses Airflow 2.x API; embedded Airflow is 3.x with JWT | Trigger DAGs directly in OM Airflow via `/auth/token` + `/api/v2/dags/` |
+| `execute_migrate_all` restarts in loop | `OM_DATABASE` set to `openmetadata` but official expects `openmetadata_db`; missing `depends_on: postgres` | Set `OM_DATABASE: openmetadata_db`, add `depends_on: postgres: condition: service_healthy` |
+| OM migration can't connect to PG | `execute-migrate-all` only depends on Elasticsearch, not PostgreSQL | Add `depends_on: postgres: condition: service_healthy` to migrate service |
+| OM ingestion DB connection fails | Ingestion env vars use custom names inconsistent with official compose | Use `AIRFLOW_DB`, `DB_USER`, `DB_PASSWORD`, `DB_SCHEME: postgresql+psycopg2` matching official |
+| OM login 500: `Invalid media-type value on headers` | Elasticsearch 8.x incompatible with OM 1.12.3 client (media_type_header_exception); all 57 index templates fail | Upgrade to Elasticsearch 9.0.2+ (official OM 1.12.3 uses ES 9.x) |
+| OM login 400: `Password needs to be encoded in Base-64` | OM 1.12.x API expects Base64-encoded passwords | Encode password in Base64 before POST; the web UI does this automatically |
+| OM UI: "Ingestion" tab not found | OM 1.12.x renamed "Ingestion" to "Agents" | Use Service → **Agents** tab → **Add Agent** (not "Add Ingestion") |
+| Container memory >85% alert from Grafana | Default memory limits too low for OM stack | Increase: ES 1536M, Server 2G, Ingestion 2560M, Worker 3G |
+| `dbt found 2 package(s) but only 0 installed` | Bind mount replaces `/app/dbt_packages`; entrypoint `run` case didn't call `dbt deps` | Add `dbt deps` before `dbt run` and `dbt test` in entrypoint.sh |
+| GX/Soda fail: `relation "core.fct_weather_observation" does not exist` in ingestion DAG | Quality checks target core/mart tables that only exist after transformation DAG | Move quality checks to transformation DAG; ingestion DAG only does staging |
+| Soda `staging_checks.yml` schema mismatch | Soda config pointed to `core` instead of `staging` schema | Create `configuration_staging.yml` with `schema: staging`; update `SCAN_CONFIGS` in `run_scan.py` |
+| GX `run_staging_validations()` checked core tables | Function was named "staging" but validated `core` schema | Rewrite to validate actual PG `staging` tables (`stg_weather_current`, `stg_weather_forecast`) |
+| `staging_quarantine` folder not detected by dbt | `staging_quarantine` not in `dbt_project.yml` | Add `staging_quarantine:` section with `+database: pg` and `+schema: staging_quarantine` |
+| OpenLineage events missing for dbt runs | dbt needs `dbt-ol` wrapper binary | Add `openlineage-dbt` to pyproject.toml; use `$DBT_BIN` conditional in entrypoint |
+| Kafka OL events not consumed by OM | OM needs database lineage pipeline configured | Register lineage pipeline in OM DAG via `/v1/services/ingestionPipelines` |
+| `bitnami/kafka:3.9` image not found | Tag doesn't exist on Docker Hub | Use official `apache/kafka:4.0.0` image instead |
+| `ModuleNotFoundError: minio` in Airflow worker | `@task` runs in worker process, not Docker container; minio not installed | Use `boto3` (from `apache-airflow-providers-amazon`) instead of `minio` for S3 in `@task` functions |
+| OM Data Quality shows 0 tests run | OM 1.12.x cannot execute tests (no API, no UI button, agent fails) | Use GX + Soda via Airflow DAGs directly; OM serves as test catalog only |
+| OM test execution "No TestSuite agent found" | Agent doesn't exist on the service | ⚠️ Creating agent won't help in OM 1.12.x — agent fails with "Test Suite with name {service} not found" |
+| OM UI has no "Run" button on tests | OM 1.12.x UI limitation — button doesn't exist | Use GX + Soda via Airflow; OM 1.13+ may have fixed this |
+| OM TestSuite agent fails "Test Suite with name datawarehouse not found" | Agent searches for a logical test suite that doesn't exist; auto-created test suites are empty | No workaround in OM 1.12.x — use GX + Soda directly |
+| OM alerts not firing | No destinations configured or alerts disabled | Run `just om-create-alerts slack="..." email="..."` or configure in UI (Settings → Notifications) |
+| OM Incident Manager empty | No test failures or incident creation disabled | Provoke a test failure (set impossible threshold) or wait for real failure |
+| Test execution slow (>10 min) | Too many tests or complex SQL queries | Reduce test frequency, optimize custom SQL tests, increase agent concurrency |
+| Tests fail with "relation does not exist" | Tests target staging tables (DuckDB in-memory) instead of core/mart (PG) | Update test entity links to point to `core.*` or `mart.*` tables, not `staging.*` |
+| OM test suite creation `405 Method Not Allowed` | Used `POST /dataQuality/testSuites` instead of `PUT` | Use `PUT /dataQuality/testSuites` with `executableEntityReference` (not `executable: True`) |
+| OM test case `Unrecognized field "testSuite"` | CreateTestCase schema has no `testSuite` field in OM 1.12.x | Remove `testSuite` from payload; test case auto-links via `entityLink` to executable suite |
+| OM profiler `Extra input: generateSampleData` | Field not in profiler config schema | Remove `generateSampleData`; profiler generates sample data by default |
+| OM dbt agent "Failed to trigger IngestionPipeline" | Corrupt/stale pipeline state after config changes | Delete pipeline (`hardDelete=true`), recreate with `POST` + `airflowConfig`, deploy, then trigger |
+| OM dbt agent no lineage from S3 | `dbtConfigSource.dbtSecurityConfig` missing MinIO credentials | Add `awsAccessKeyId`, `awsSecretAccessKey`, `awsRegion`, `endPointURL` to `dbtSecurityConfig` |
+| `dbt docs generate` empty catalog with dbt-duckdb | DuckDB `:memory:` doesn't persist across invocations; ATTACH PG not in information_schema | Accept empty catalog; manifest.json provides sufficient lineage for OM |
+| Service Lineage view shows isolated nodes | No lineage edges between services; dbt agent didn't create edges | Use `PUT /api/v1/lineage` to create table→table and pipeline→table edges manually |
+| Pipeline entities missing in OM | Airflow metadata agent not running or Airflow DAGs not ingested | Create pipeline entities via `PUT /api/v1/pipelines` with `service: "airflow"` |
+| OM Airflow Metadata Agent deploy fails (Internal Server Error) | OM Ingestion's embedded Airflow cannot deploy DAGs targeting external Airflow 3.x (JWT auth incompatible) | Sync DAGs manually via Airflow API → OM API (`sync_airflow_pipelines()` in `om_setup_full.py`) |
+| Pipeline executions tab empty | `PUT /pipelines/{id}/pipelineStatus` returns 404 in OM 1.12.x; `pipelineStatus` is not a field on `CreatePipeline` | Executions only populated by OM's built-in Metadata Agent — not available via REST API |
+| Airflow 3.x JWT auth: 405 on `/auth/token` | Auth endpoint expects JSON body `POST /auth/token`, returns **201** (not 200) | Use `json={"username":..., "password":...}` and check `status_code in (200, 201)` |
+| `Unknown custom field dataContract` on table PATCH | OM 1.12.x has no native `dataContract` custom property on tables | Write contract text into the table `description` field instead (appears in Description tab) |
+| Orphan test suites accumulate | `PUT /dataQuality/testSuites` creates suites with auto-generated FQN names alongside existing short-name suites | Delete empty orphan suites (`tests` array empty) via `DELETE /dataQuality/testSuites/{id}?hardDelete=true` |
+| Pipeline sourceUrl `http://localhost:8080/dags/{id}/grid` redirects | Airflow 3.x doesn't serve grid view at that path from outside | Use `http://localhost:8080/dags/{id}` without `/grid` suffix |
+| `airflow.models.param.Param` deprecated warning | Airflow 3.x moved Param to SDK | Use `from airflow.sdk import Param` instead of `from airflow.models.param import Param` |
+| `bind source path does not exist: /mnt/c/...` | `PROJECT_ROOT` uses WSL `/mnt/c/` format; Docker Desktop expects Windows native | Set `PROJECT_ROOT=C:/Users/...` (not `/mnt/c/Users/...`) in `.env` and Airflow variables |
+| `No module named 'confluent_kafka'` in Airflow | `confluent-kafka` added to pyproject.toml but image not rebuilt | Rebuild Airflow image: `just build-airflow` then restart services |
+| `__pycache__` prevents updated plugins from loading | Python bytecode cache retains old module version after bind mount update | Delete `__pycache__` in `/opt/airflow/plugins/` and `/opt/airflow/dags/`, then restart services |
+| Metabase `liquibase.exception.LockException: Database has migration lock` | Metabase crashed during migration; lock not released | Stop Metabase, run `DELETE FROM databasechangeloglock WHERE locked = true;` in PG, restart |
+| Metabase `Unable to connect to Metabase postgres DB` | Database/role not created (init scripts only run on first volume creation) | Create role + database manually: `CREATE ROLE metabase_user WITH LOGIN PASSWORD '...'; CREATE DATABASE metabase OWNER metabase_user;` |
+| `unsupported operand type(s) for >>: 'list' and 'list'` in DAG | Airflow `>>` operator doesn't support `list >> list` | Use `chain(task, [parallel_tasks], [parallel_tasks], next_task)` from `airflow.models.baseoperator` |
+| `AirflowSchedulerDown` alert after restart + worker at 93%+ memory | Worker OOM pressure when OM ingestion + data pipelines run concurrently; scheduler heartbeat delayed | Increase worker `mem_limit` (4G → 5G) and reservation (2G → 2560M); use `docker compose up -d --force-recreate` to apply |
+| `PrometheusTooManyRestarts` after container redeployment | `for: 0m` + threshold `> 2` too sensitive; `docker compose up -d` resets `process_start_time_seconds` on recreated targets | Change to `> 3` with `for: 5m` to ignore planned deployments |
 
 ## Ingestion CLI Architecture
 
@@ -435,10 +513,44 @@ Tools: `dbt_docs`, `great_expectations`, `soda`.
 - OM 1.12.3 uses `AirflowRESTClient` pointing to `openmetadata-ingestion:8080`.
 - OM ingestion container bundles its own Airflow 3.x with `LocalExecutor`.
 - Healthcheck: `curl -sf http://localhost:8080/api/v2/version` (not `/api/v1/health`).
-- Container needs 2G+ memory and 1 CPU for stable Airflow operation.
+- Container needs 2.5G+ memory and 1.5 CPU for stable Airflow operation.
 - Ingestion pipelines require `airflowConfig` field in creation payload.
 - OM's `AirflowRESTClient` has Airflow 2.x/3.x compat issues for deploy/trigger.
 - Workaround: trigger OM's internal DAGs directly via JWT auth on its Airflow API.
+
+### OpenMetadata 1.12.x UI Terminology (Breaking Changes)
+- **"Ingestion" tab** renamed to **"Agents"** tab on Service page.
+- **"Add Ingestion"** renamed to **"Add Agent"** (Add Metadata Agent, Add Profiler Agent, Add dbt Agent).
+- **"Ingestion Pipeline"** renamed to **"Agent"** throughout the UI.
+- Service page tabs: **Insights**, **Databases**, **Agents**, **Connection**.
+- Table page tabs: **Columns** | **Activity Feeds & Tasks** | **Sample Data** | **Queries** | **Data Observability** | **Lineage** | **Contract** | **Custom Properties**.
+- **"Profiler" tab** (on table) renamed to **"Data Observability"** with sub-tabs: Table Profile, Column Profile, Data Quality, Incidents.
+- **"Data Quality" tab** (on table) is now a sub-tab of **Data Observability**.
+- Official docs: `https://docs.open-metadata.org/v1.12.x/` (always use versioned URL).
+- Ref: https://docs.open-metadata.org/v1.12.x/how-to-guides/admin-guide/how-to-ingest-metadata
+
+### OpenMetadata Bootstrap Script (`metadata/om_bootstrap.py`)
+- Provisions all OM governance via REST API: classifications, glossary, teams, users, tiers, domains, custom properties.
+- Run: `just om-bootstrap` or `python metadata/om_bootstrap.py`.
+- `--dry-run` mode to preview without applying changes.
+- `--export-only` mode to export current config to JSON.
+- dbt descriptions/lineage imported separately via **dbt Agent** (reads `manifest.json`/`catalog.json` from S3).
+- Data Contracts (`contracts/*.yaml`) validate API responses **pre-ingestion** — not the same as OM Contracts.
+- OM Contracts (table-level) are managed via UI: table → Contract tab → Add Contract.
+
+### OpenMetadata PostgreSQL Configuration (shared PG instance)
+- **Database name**: `openmetadata_db` (official default, not `openmetadata`).
+- **DB user**: `openmetadata_user` / `openmetadata_password` — created in `00_create_roles.sql`.
+- **Airflow DB**: `openmetadata_airflow` owned by `openmetadata_airflow_user`.
+- `DB_HOST: postgres` — points to the shared PG instance, not a dedicated OM PG container.
+- `execute-migrate-all` **MUST** `depends_on: postgres: condition: service_healthy`.
+- `execute-migrate-all` has no `restart` policy — it runs once and exits (code 0).
+- `openmetadata-server` depends on `execute-migrate-all: condition: service_completed_successfully`.
+- `DB_USE_SSL: "false"` required for local dev (official compose includes it).
+- `PIPELINE_SERVICE_CLIENT_ENABLED: "true"` must be set explicitly on both migrate and server.
+- `AUTHORIZER_ALLOWED_REGISTRATION_DOMAIN: '["all"]'` — required for basic auth self-signup.
+- **Elasticsearch version**: must be 9.0.2+ for OM 1.12.3 (ES 8.x causes `media_type_header_exception` on all index templates).
+- **Default login**: `admin@open-metadata.org` / `admin` (password must be Base64-encoded for API calls, web UI handles this automatically).
 
 ### Cosmos Integration (DOCKER execution + dbt-duckdb)
 - `DbtTaskGroup` with `ExecutionMode.DOCKER` — dbt runs in isolated Docker containers.
@@ -470,10 +582,124 @@ Tools: `dbt_docs`, `great_expectations`, `soda`.
 - Increase to 3G+ with `cpus: "2.00"` for reliable heartbeats.
 - Healthcheck intervals: `interval: 60s`, `timeout: 30s`, `start_period: 60s`.
 
+### Container Memory Sizing (Post-OOM Tuning)
+- **airflow_worker**: 5G limit / 2560M reservation / 2 CPUs (was 4G @ 93% → increased to 5G after high memory alert).
+- **openmetadata-elasticsearch**: 2G limit / 1G reservation + `ES_JAVA_OPTS: -Xms1g -Xmx1g` (was 1536M/768M).
+- **openmetadata-server**: 2560M limit / 1536M reservation + `OPENMETADATA_HEAP_OPTS: -Xmx2G -Xms2G` (was 2G/1G).
+- **openmetadata-ingestion**: 3G limit / 2G reservation / 1.5 CPUs (was 2560M — OOM during agent runs).
+- **execute-migrate-all**: 1536M limit / 768M reservation / 1 CPU (run-once migration container).
+
 ### Prometheus Stability
 - Enable WAL compression: `--storage.tsdb.wal-compression` to reduce disk I/O.
 - Increase memory to 1536M+ with 768M reservation for stable operation.
 - Healthcheck with `start_period: 30s` to avoid false failures during startup.
+
+### dbt Entrypoint: Always Run deps Before run/test
+- The `run` and `test` cases in `/entrypoint.sh` MUST call `dbt deps` first.
+- Bind mounts at `/app` replace the Docker image's `dbt_packages/` directory (which is empty).
+- Without `dbt deps`, dbt fails: `found 2 package(s) specified but only 0 installed`.
+- The `build` case already ran `deps` — `run` and `test` were missing it.
+
+### Quality Checks Belong in Transformation DAG (Not Ingestion)
+- The ingestion DAG runs `dbt run --select staging` — staging models are DuckDB in-memory views.
+- GX + Soda check `core` tables (`fct_weather_observation`, `dim_city`) which only exist after the transformation DAG runs.
+- Quality checks in the ingestion DAG will always fail with `relation does not exist`.
+- Solution: move quality checks to the transformation DAG where core/mart tables are materialized in PG.
+
+### dbt-duckdb catalog.json Empty (Known Limitation)
+- `dbt docs generate` with dbt-duckdb `:memory:` produces an empty catalog (`"nodes": {}, "sources": {}`).
+- Root cause: each `dbt` command starts a new DuckDB session; models built by `dbt run` in PG via ATTACH are not visible to a subsequent `dbt docs generate` because DuckDB's information_schema doesn't include attached databases.
+- The entrypoint `docs` case now runs `dbt run` before `dbt docs generate`, but the catalog remains empty because they're separate process invocations.
+- **Workaround**: The manifest.json (2+ MB) contains all model definitions, refs, columns — OM's dbt Agent uses it for lineage. The catalog is not strictly required.
+
+### OpenMetadata API Patterns (OM 1.12.x)
+- **Test Suites**: `PUT /dataQuality/testSuites` — do NOT include `executable` field (not in CreateTestSuite schema). Use `executableEntityReference` to link to a table FQN.
+- **Test Cases**: `PUT /dataQuality/testCases` — do NOT include `testSuite` field (not in CreateTestCase schema). Test cases auto-link to the executable test suite via `entityLink`.
+- **Airflow Service**: `PUT /services/pipelineServices` with `connection.config.type: "Airflow"` and `connection.config.hostPort` — do NOT nest a second `connection` object inside `config`.
+- **Profiler Config**: No `generateSampleData` field exists. Sample data is generated automatically when profiler runs. Valid config keys: `computeMetrics`, `computeTableMetrics`, `computeColumnMetrics`, `profileSample`, `schemaFilterPattern`.
+- **dbt Agent S3/MinIO**: The `dbtConfigSource` must include `dbtSecurityConfig` with `awsAccessKeyId`, `awsSecretAccessKey`, `awsRegion`, `endPointURL` for MinIO. Without these, the trigger fails silently.
+- **dbt Agent Corrupt State**: If dbt agent returns "Failed to trigger IngestionPipeline", delete (`hardDelete=true`) and recreate with `POST /services/ingestionPipelines` + `airflowConfig` block, then `POST .../deploy/{id}` before `POST .../trigger/{id}`.
+
+### OM Setup Scripts (metadata/ folder)
+- `om_bootstrap.py`: Provisions governance (classifications, glossary, teams, users, tiers, custom properties, table configs, domains).
+- `om_setup_full.py`: Full setup (Airflow service, profiler update, test suites/cases, lineage, column descriptions, agent triggers).
+- `just om-bootstrap`: governance provisioning.
+- `just om-setup`: full setup (tests + profiler + services + lineage + triggers).
+- `just om-export`: exports current OM config to JSON.
+
+### OM Lineage API (`PUT /api/v1/lineage`)
+- Use `PUT /api/v1/lineage` (not POST) to create edges. Idempotent — safe to re-run.
+- Table-to-table: `edge.fromEntity.type: "table"`, `edge.toEntity.type: "table"`.
+- Pipeline-to-table: `edge.fromEntity.type: "pipeline"`, `edge.toEntity.type: "table"` (or reverse for inputs).
+- Pipeline entities must exist before creating pipeline↔table edges. Create via `PUT /api/v1/pipelines` with `service: "airflow"`.
+- The dbt agent reads `manifest.json` for lineage but requires a non-empty `catalog.json` for full column-level lineage. With dbt-duckdb `:memory:`, manual lineage via API is more reliable.
+- `lineageDetails.source` can be `"Manual"`, `"DbtLineage"`, `"OpenLineage"`, etc.
+- Service Lineage view (`/lineage`) only shows edges if entities from different services are connected (e.g., pipeline:airflow → table:datawarehouse).
+
+### OM Airflow Sync Pattern (Airflow 3.x → OM 1.12.x)
+- OM's built-in Metadata Agent for Airflow services **cannot deploy** on Airflow 3.x (JWT auth + API server separation).
+- Instead, `om_setup_full.py` syncs Airflow DAGs directly:
+  1. Auth to Airflow via `POST /auth/token` (JSON body, returns 201).
+  2. Fetch DAGs + tasks via `/api/v2/dags` and `/api/v2/dags/{id}/tasks`.
+  3. Push pipeline entities to OM via `PUT /api/v1/pipelines` with `tasks` array.
+  4. Tasks include `name`, `displayName`, `taskType` (operator name), `downstreamTasks`.
+- Pipeline execution status (runs) **cannot** be pushed via REST API in OM 1.12.x — no public endpoint exists.
+- The `sourceUrl` field links back to Airflow (use `/dags/{id}`, NOT `/dags/{id}/grid`).
+- Task metadata includes `description`, `displayName`, `taskType` (operator name), `downstreamTasks`.
+- Pipeline owners are set via JSON Patch on `/pipelines/{id}` with team references.
+- Teams auto-created if they don't exist (Data Engineering, Data Governance, Platform Engineering).
+
+### OM Data Contracts Pattern
+- OM 1.12.x has **no native `dataContract` field** on tables — the "Contract" tab is not editable via API.
+- Workaround: embed contract text in the table **description** (markdown-formatted, with SLA, schema, quality rules, consumers).
+- `add_table_contracts()` in `om_setup_full.py` appends contract below existing description with `---` separator.
+- Idempotent: checks for `"Data Contract"` in existing description before re-adding.
+
+### OM Test Execution Pattern (OM 1.12.x — SEVERELY LIMITED)
+- Tests are created via `PUT /dataQuality/testCases` with `entityLink` pointing to the table/column FQN.
+- Test suites with `executableEntityReference` are auto-created by OM when test cases reference a table.
+- **OM 1.12.x CANNOT execute tests programmatically or via UI**:
+  - ❌ API endpoint `/dataQuality/testCases/{id}/execute` does not exist (returns 404).
+  - ❌ UI has **no "Run" button** on individual tests or "Run All" button on table pages.
+  - ❌ TestSuite agent fails with `Test Suite with name {service} not found` — searches for a logical test suite that doesn't exist by default.
+  - ❌ Auto-created test suites (per table) are empty: `executable: false`, `tests: []`.
+- **Table URL format**: `http://localhost:8585/table/{service}.{database}.{schema}.{table}/profiler/data-quality`
+- **Workaround**: Run Great Expectations and Soda Core directly via Airflow DAGs (`quality_gate_pipeline`, `transformation_pipeline`). Reports stored on S3 under `_reports/great_expectations/` and `_reports/soda/`.
+- **OM role in 1.12.x**: Tests serve as **documentation/catalog only** — not an execution engine.
+- Orphan suites (0 tests) are cleaned up by `cleanup_and_run_tests()` in `om_setup_full.py`.
+
+### OM TestSuite Agent Setup (OM 1.12.x Limitations)
+- **Purpose**: Enable scheduled test execution (on-demand via API is unreliable).
+- **UI-based creation** (recommended):
+ 1. OM UI → Settings → Services → datawarehouse → Agents → Add Agent.
+ 2. Type: TestSuite.
+ 3. Entity: `datawarehouse.datawarehouse` (database FQN).
+ 4. Schedule: cron expression (e.g., `0 */6 * * *`).
+ 5. Deploy → Run.
+- **Script-based creation** (limited): `uv run --extra dev python metadata/om_create_test_agent.py` creates agent but deploy may fail if OM's internal Airflow DB not initialized.
+- **Fix for deploy failures**: `docker exec openmetadata_ingestion_metadata airflow db migrate` then restart container.
+- **On-demand execution**: Use OM UI (table → Data Observability → Data Quality → Run All) — API trigger unreliable.
+
+### OM Observability Alerts Setup
+- **Purpose**: Automated notifications for test failures, schema changes, freshness issues, new tables.
+- **Creation**: `just om-create-alerts slack="https://..." email="team@company.com"`.
+- **Alert types created**:
+ 1. **Test Failure**: triggers on Failed/Aborted test results.
+ 2. **Schema Change**: triggers on column modifications.
+ 3. **Data Freshness**: triggers on freshness test failures.
+ 4. **New Table**: triggers on table creation.
+- **Destinations**: Slack webhook + Email (optional, can be added later via UI).
+- **Verification**: OM UI → Settings → Notifications → Alerts.
+- **Batch size**: 10 events per notification (configurable).
+- **Poll interval**: 60 seconds (how often OM checks for new events).
+
+### Data Quality Complete Setup Pattern
+- **One-command setup**: `just om-quality-setup schedule="0 */6 * * *" slack="https://..." email="team@company.com"`.
+- **What it does**:
+ 1. Creates TestSuite agent with scheduling.
+ 2. Creates all observability alerts with destinations.
+- **When to use**: First-time setup or after OM reset.
+- **Idempotent**: Safe to re-run, cleans up existing agents/alerts first.
 
 ## Update Protocol
 

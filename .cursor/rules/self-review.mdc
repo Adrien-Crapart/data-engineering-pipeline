@@ -1,0 +1,105 @@
+---
+description: Self-review checklist — mandatory pre-push gate for all branches
+alwaysApply: true
+---
+
+# Self-Review Checklist (Pre-Push Gate)
+
+> "If your reviewer has to guess something, your PR is not ready."
+
+Before pushing to remote or opening a PR, **every item must be verified**.
+Run `just review` to automate the technical checks.
+
+## A. Functional Cohesion
+
+- [ ] PR addresses a **single objective** (one feature / one fix / one refactor)
+- [ ] Expected behavior is documented in commit messages or PR description
+- [ ] No unintended side effects on other pipelines or models
+- [ ] Edge cases are handled (NULL values, empty datasets, API failures)
+
+## B. Diff Hygiene
+
+- [ ] No unrelated files modified (formatting-only changes, unneeded config edits)
+- [ ] No commented-out code left behind
+- [ ] No `TODO` / `FIXME` without a linked issue
+- [ ] No temporary debug code (`print()`, hardcoded test values)
+- [ ] Commits follow layering order (see `git-workflow.mdc`)
+
+## C. Security & Secrets
+
+- [ ] No credentials, API keys, or passwords in the diff
+- [ ] No `.env` file committed (only `.env.example`)
+- [ ] No hardcoded connection strings (use Airflow Connections/Variables)
+- [ ] Sensitive files are in `.gitignore`
+
+## D. Code Quality (Python)
+
+- [ ] `just check` passes (ruff lint + format)
+- [ ] No `any` type annotations (TypeScript) or untyped functions
+- [ ] Naming is explicit — no `data`, `tmp`, `x`, `df2`
+- [ ] No unnecessary complexity (KISS principle)
+- [ ] No duplication (DRY) — extract to shared utilities if repeated 3+ times
+- [ ] Code readable without oral explanation
+
+## E. SQL / dbt Models
+
+- [ ] No `SELECT *` — all columns explicitly named
+- [ ] JOIN conditions verified (no accidental cartesian products)
+- [ ] NULL handling explicit (`COALESCE`, `NULLIF`, or documented)
+- [ ] Aggregations correct (GROUP BY matches SELECT)
+- [ ] `ref()` and `source()` used correctly (no hardcoded table names)
+- [ ] No dependency cycles introduced (check `dbt ls --select +model_name+`)
+- [ ] Schema tests defined in `_models.yml` (`not_null`, `unique`, `accepted_values`)
+- [ ] `+database: pg` set for core/mart models (not DuckDB in-memory)
+
+## F. Airflow DAGs
+
+- [ ] DAG id is stable and descriptive
+- [ ] No heavy logic in DAG file (orchestration only, processing in Docker)
+- [ ] Task dependencies are explicit (`>>` or `chain()`)
+- [ ] `retries`, `retry_delay`, `execution_timeout` set in `default_args`
+- [ ] `max_active_runs=1` for data pipelines
+- [ ] `catchup=False` unless backfill intended
+- [ ] No `Variable.get()` at module level (parse-time penalty)
+- [ ] Asset emissions (`outlets`) match the event chain
+- [ ] Pool assignments correct (`docker_pool`, `database_pool`, `api_pool`)
+
+## G. Data Correctness (Data Engineering Critical)
+
+- [ ] Transformations produce expected business results
+- [ ] Verified on sample data (row counts, sums, distributions)
+- [ ] Before/after comparison if modifying existing models
+- [ ] Idempotent — pipeline can be re-run without side effects
+- [ ] Incremental logic handles late-arriving data correctly
+
+## H. Docker & Infrastructure
+
+- [ ] Docker images build successfully if Dockerfile changed (`just build-all`)
+- [ ] Containers start and pass health checks
+- [ ] No `:latest` tags — all images pinned to versions
+- [ ] `mem_limit` set for DockerOperator tasks
+- [ ] Entrypoint scripts tested after modification
+- [ ] Bind mounts don't overwrite `.venv` or entrypoint
+
+## I. Tests & Quality Gates
+
+- [ ] `just test` passes (unit tests)
+- [ ] New code has corresponding tests
+- [ ] dbt tests pass if models changed (`just dbt-test`)
+- [ ] Quality checks (GX/Soda) target the correct schema and tables
+- [ ] No broken or flaky tests ignored
+
+## J. Documentation & Observability
+
+- [ ] `docs/pipeline.md` or `docs/lakehouse.md` updated if architecture changed
+- [ ] dbt model descriptions updated in `_models.yml`
+- [ ] DAG `doc_md` set for new/modified DAGs
+- [ ] Logs are meaningful (not verbose noise)
+- [ ] Alerting configured if the change is critical path
+
+## K. Final Gate (Human Judgment)
+
+- [ ] I can explain this PR in under 2 minutes without looking at the code
+- [ ] I understand exactly what breaks if this fails
+- [ ] A reviewer can understand the PR by reading commits in order
+- [ ] I tested on realistic data, not just empty/trivial cases

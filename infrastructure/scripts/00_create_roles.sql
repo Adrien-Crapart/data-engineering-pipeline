@@ -35,3 +35,12 @@ BEGIN
   END IF;
 END
 $$;
+
+-- Metabase database owner
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'metabase_user') THEN
+    CREATE ROLE metabase_user WITH LOGIN PASSWORD 'metabase_password';
+  END IF;
+END
+$$;

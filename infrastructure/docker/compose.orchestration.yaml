@@ -49,7 +49,7 @@ networks:
 services:
   airflow-init:
     <<: *airflow-common
-    container_name: airflow-init
+    container_name: airflow_init_orchestration
     entrypoint: /bin/bash
     command:
       - -c
@@ -75,7 +75,7 @@ services:
 
   airflow-api-server:
     <<: *airflow-common
-    container_name: airflow-api-server
+    container_name: airflow_api_server_orchestration
     command: api-server
     ports:
       - "8080:8080"
@@ -85,7 +85,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    restart: always
+    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -99,7 +99,7 @@ services:
 
   airflow-scheduler:
     <<: *airflow-common
-    container_name: airflow-scheduler
+    container_name: airflow_scheduler_orchestration
     command: scheduler
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
@@ -107,7 +107,7 @@ services:
       timeout: 30s
       retries: 5
       start_period: 60s
-    restart: always
+    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -121,7 +121,7 @@ services:
 
   airflow-dag-processor:
     <<: *airflow-common
-    container_name: airflow-dag-processor
+    container_name: airflow_dag_processor_orchestration
     command: dag-processor
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
@@ -129,7 +129,7 @@ services:
       timeout: 30s
       retries: 5
       start_period: 60s
-    restart: always
+    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -143,7 +143,7 @@ services:
 
   airflow-worker:
     <<: *airflow-common
-    container_name: airflow-worker
+    container_name: airflow_worker_orchestration
     command: celery worker
     user: "50000:0"
     group_add:
@@ -165,14 +165,14 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    restart: always
+    restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: "1.50"
+          memory: 5G
+          cpus: "2.00"
         reservations:
-          memory: 1G
+          memory: 2560M
     depends_on:
       airflow-api-server:
         condition: service_healthy
@@ -181,7 +181,7 @@ services:
 
   airflow-triggerer:
     <<: *airflow-common
-    container_name: airflow-triggerer
+    container_name: airflow_triggerer_orchestration
     command: triggerer
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
@@ -189,7 +189,7 @@ services:
       timeout: 30s
       retries: 5
       start_period: 60s
-    restart: always
+    restart: unless-stopped
     deploy:
       resources:
         limits:
@@ -203,7 +203,7 @@ services:
 
   flower:
     <<: *airflow-common
-    container_name: flower
+    container_name: flower_orchestration
     command: celery flower
     profiles:
       - flower
@@ -215,7 +215,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
-    restart: always
+    restart: unless-stopped
     deploy:
       resources:
         limits:

@@ -54,7 +54,7 @@ def _get_minio() -> Minio | None:
 
 
 def _upload(client: Minio, key: str, data: bytes, content_type: str) -> None:
-    bucket = os.getenv("MINIO_BUCKET_NAME", "weather-data-lake")
+    bucket = os.getenv("MINIO_BUCKET_NAME", "data-lake")
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
     client.put_object(
@@ -135,7 +135,86 @@ def _pg_connection_string(schema: str = "public") -> str:
 
 
 def run_staging_validations() -> dict:
-    """Validate core tables (dbt-duckdb writes staging views to DuckDB, core/mart to PG)."""
+    """Validate staging tables in PostgreSQL (silver layer post-staging quality gate)."""
+    import great_expectations as gx
+    from great_expectations.core.expectation_suite import ExpectationSuite
+    from great_expectations.core.validation_definition import ValidationDefinition
+
+    context = gx.get_context()
+    ds = context.data_sources.add_postgres(
+        "staging_db",
+        connection_string=_pg_connection_string("staging"),
+    )
+
+    results = {}
+    tables = {
+        "stg_weather_current": [
+            gx.expectations.ExpectTableRowCountToBeBetween(min_value=1),
+            gx.expectations.ExpectColumnToExist(column="city_name"),
+            gx.expectations.ExpectColumnToExist(column="temperature_celsius"),
+            gx.expectations.ExpectColumnToExist(column="humidity_percent"),
+            gx.expectations.ExpectColumnToExist(column="measured_at"),
+            gx.expectations.ExpectColumnValuesToNotBeNull(column="city_name"),
+            gx.expectations.ExpectColumnValuesToNotBeNull(column="temperature_celsius"),
+            gx.expectations.ExpectColumnValuesToNotBeNull(column="measured_at"),
+            gx.expectations.ExpectColumnValuesToBeBetween(
+                column="temperature_celsius",
+                min_value=-90.0,
+                max_value=60.0,
+            ),
+            gx.expectations.ExpectColumnValuesToBeBetween(
+                column="humidity_percent",
+                min_value=0.0,
+                max_value=100.0,
+                mostly=0.95,
+            ),
+            gx.expectations.ExpectColumnValuesToBeUnique(column="row_id"),
+        ],
+        "stg_weather_forecast": [
+            gx.expectations.ExpectTableRowCountToBeBetween(min_value=1),
+            gx.expectations.ExpectColumnToExist(column="city_name"),
+            gx.expectations.ExpectColumnToExist(column="temperature_celsius"),
+            gx.expectations.ExpectColumnToExist(column="forecast_at"),
+            gx.expectations.ExpectColumnValuesToNotBeNull(column="city_name"),
+            gx.expectations.ExpectColumnValuesToNotBeNull(column="temperature_celsius"),
+            gx.expectations.ExpectColumnValuesToNotBeNull(column="forecast_at"),
+            gx.expectations.ExpectColumnValuesToBeBetween(
+                column="temperature_celsius",
+                min_value=-90.0,
+                max_value=60.0,
+            ),
+            gx.expectations.ExpectColumnValuesToBeUnique(column="row_id"),
+        ],
+    }
+
+    for table, expectations in tables.items():
+        suite = context.suites.add(ExpectationSuite(name=f"gx_staging_{table}"))
+        for exp in expectations:
+            suite.add_expectation(exp)
+
+        asset = ds.add_table_asset(name=table, table_name=table)
+        batch_def = asset.add_batch_definition_whole_table(f"{table}_batch")
+
+        vd = context.validation_definitions.add(
+            ValidationDefinition(
+                name=f"validate_staging_{table}", data=batch_def, suite=suite
+            )
+        )
+        cp = context.checkpoints.add(
+            gx.checkpoint.checkpoint.Checkpoint(
+                name=f"cp_staging_{table}",
+                validation_definitions=[vd],
+            )
+        )
+        result = cp.run()
+        results[table] = {"success": result.success, "details": str(result.describe())}
+        logger.info("GX staging %s: %s", table, "PASS" if result.success else "FAIL")
+
+    return results
+
+
+def run_core_validations() -> dict:
+    """Validate core tables in PostgreSQL (gold layer - shared business domain)."""
     import great_expectations as gx
     from great_expectations.core.expectation_suite import ExpectationSuite
     from great_expectations.core.validation_definition import ValidationDefinition
@@ -175,7 +254,7 @@ def run_staging_validations() -> dict:
     }
 
     for table, expectations in tables.items():
-        suite = context.suites.add(ExpectationSuite(name=f"gx_{table}"))
+        suite = context.suites.add(ExpectationSuite(name=f"gx_core_{table}"))
         for exp in expectations:
             suite.add_expectation(exp)
 
@@ -183,17 +262,19 @@ def run_staging_validations() -> dict:
         batch_def = asset.add_batch_definition_whole_table(f"{table}_batch")
 
         vd = context.validation_definitions.add(
-            ValidationDefinition(name=f"validate_{table}", data=batch_def, suite=suite)
+            ValidationDefinition(
+                name=f"validate_core_{table}", data=batch_def, suite=suite
+            )
         )
         cp = context.checkpoints.add(
             gx.checkpoint.checkpoint.Checkpoint(
-                name=f"cp_{table}",
+                name=f"cp_core_{table}",
                 validation_definitions=[vd],
             )
         )
         result = cp.run()
         results[table] = {"success": result.success, "details": str(result.describe())}
-        logger.info("GX %s: %s", table, "PASS" if result.success else "FAIL")
+        logger.info("GX core %s: %s", table, "PASS" if result.success else "FAIL")
 
     return results
 
@@ -256,7 +337,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     parser = argparse.ArgumentParser(description="Run GX validations")
-    parser.add_argument("--layer", choices=["staging", "mart", "all"], default="all")
+    parser.add_argument(
+        "--layer", choices=["staging", "core", "mart", "all"], default="all"
+    )
     args = parser.parse_args()
 
     minio = _get_minio()
@@ -268,6 +351,13 @@ def main() -> None:
         staging = run_staging_validations()
         all_results["staging"] = staging
         if not all(r["success"] for r in staging.values()):
+            failed = True
+
+    if args.layer in ("core", "all"):
+        logger.info("=== Running core GX validations ===")
+        core = run_core_validations()
+        all_results["core"] = core
+        if not all(r["success"] for r in core.values()):
             failed = True
 
     if args.layer in ("mart", "all"):

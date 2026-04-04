@@ -21,7 +21,7 @@ from minio import Minio
 logger = logging.getLogger(__name__)
 
 TARGET_DIR = Path(os.getenv("DBT_TARGET_DIR", "/app/target"))
-BUCKET = os.getenv("MINIO_BUCKET_NAME", "weather-data-lake")
+BUCKET = os.getenv("MINIO_BUCKET_NAME", "data-lake")
 PREFIX = os.getenv("REPORT_S3_PREFIX", "_reports/dbt_docs")
 
 

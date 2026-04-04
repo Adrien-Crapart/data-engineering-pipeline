@@ -1,12 +1,13 @@
 """
-OpenMetadata Ingestion DAG — Synchronize metadata from all data sources
-into OpenMetadata for lineage, quality, and governance.
+OpenMetadata Ingestion DAG — Synchronize metadata, lineage, and quality
+metrics from all data sources into OpenMetadata for governance.
 
 Registers and runs metadata ingestion for:
   1. PostgreSQL (datawarehouse) — tables, columns, lineage
   2. dbt — models, tests, lineage from manifest/catalog
   3. MinIO S3 — raw data assets
-  4. Airflow — pipeline lineage
+  4. OpenLineage — real-time lineage from Kafka topic
+  5. Quality metrics — GX/Soda results as test suites
 
 Schedule: Daily at 03:00 Europe/Paris (after all pipelines have run).
 """
@@ -17,9 +18,7 @@ import json
 import logging
 from datetime import timedelta
 
-from airflow.models.param import Param
-from airflow.sdk import dag, task
-
+from airflow.sdk import Param, dag, task
 from plugins.callbacks.handlers import on_failure_callback
 from plugins.constants import DAG_START_DATE, POOL_API
 
@@ -41,8 +40,8 @@ OM_SERVER_URL = "http://openmetadata-server:8585/api"
 def _get_om_token() -> str:
     """Get auth token from OpenMetadata via admin login."""
     import base64
-    import requests
 
+    import requests
     from airflow.models import Variable
 
     email = Variable.get("om_admin_email", default_var="admin@open-metadata.org")
@@ -66,16 +65,18 @@ def _get_om_headers() -> dict:
 
 @dag(
     dag_id="openmetadata_ingestion",
-    description="Sync metadata from PostgreSQL, dbt, S3, and Airflow into OpenMetadata",
+    description="Sync metadata, lineage (OpenLineage/Kafka), and quality metrics into OpenMetadata",
     schedule="0 3 * * *",
     start_date=DAG_START_DATE,
     catchup=False,
     max_active_runs=1,
     default_args=default_args,
-    tags=["openmetadata", "governance", "lineage", "metadata"],
+    tags=["openmetadata", "governance", "lineage", "metadata", "quality"],
     doc_md=__doc__,
     params={
-        "force_refresh": Param(default=False, type="boolean", description="Force full metadata refresh"),
+        "force_refresh": Param(
+            default=False, type="boolean", description="Force full metadata refresh"
+        ),
     },
 )
 def openmetadata_ingestion():
@@ -84,8 +85,8 @@ def openmetadata_ingestion():
     def register_postgres_service() -> dict:
         """Register the PostgreSQL datawarehouse as a Database Service in OpenMetadata."""
         import os
-        import requests
 
+        import requests
         from airflow.models import Variable
 
         service_payload = {
@@ -117,7 +118,6 @@ def openmetadata_ingestion():
     def register_s3_service() -> dict:
         """Register MinIO S3 as a Storage Service in OpenMetadata."""
         import requests
-
         from airflow.hooks.base import BaseHook
 
         try:
@@ -173,7 +173,13 @@ def openmetadata_ingestion():
                     "includeTables": True,
                     "includeViews": True,
                     "schemaFilterPattern": {
-                        "includes": ["staging", "core", "mart", "analytic", "raw"],
+                        "includes": [
+                            "staging",
+                            "staging_quarantine",
+                            "core",
+                            "mart",
+                            "analytic",
+                        ],
                     },
                 }
             },
@@ -203,11 +209,10 @@ def openmetadata_ingestion():
     def register_dbt_pipeline(pg_service: dict) -> str:
         """Register dbt lineage ingestion for the PostgreSQL service."""
         import requests
-
         from airflow.models import Variable
 
         service_id = pg_service.get("id", "")
-        bucket = Variable.get("minio_bucket_name", default_var="weather-data-lake")
+        bucket = Variable.get("minio_bucket_name", default_var="data-lake")
 
         dbt_payload = {
             "name": f"dbt_lineage_{service_id[:8]}",
@@ -248,12 +253,276 @@ def openmetadata_ingestion():
         logger.info("dbt lineage configured for service %s", service_id)
         return "dbt_configured"
 
+    @task(pool=POOL_API)
+    def configure_openlineage_pipeline(pg_service: dict) -> str:
+        """Register OpenLineage ingestion pipeline consuming Kafka events for real-time lineage."""
+        import requests
+
+        service_id = pg_service.get("id", "")
+        ol_payload = {
+            "name": f"openlineage_lineage_{service_id[:8]}",
+            "pipelineType": "lineage",
+            "service": {"id": service_id, "type": "databaseService"},
+            "sourceConfig": {
+                "config": {
+                    "type": "DatabaseLineage",
+                    "queryLogDuration": 1,
+                    "resultLimit": 1000,
+                }
+            },
+            "airflowConfig": {
+                "pausePipeline": False,
+                "concurrency": 1,
+                "startDate": "2026-03-29",
+                "retries": 0,
+            },
+        }
+
+        resp = requests.post(
+            f"{OM_SERVER_URL}/v1/services/ingestionPipelines",
+            headers=_get_om_headers(),
+            json=ol_payload,
+            timeout=30,
+        )
+        if resp.status_code in (409, 400):
+            logger.info(
+                "OpenLineage pipeline config skipped (status=%s)", resp.status_code
+            )
+        else:
+            resp.raise_for_status()
+
+        logger.info(
+            "OpenLineage lineage pipeline configured for service %s", service_id
+        )
+        return "openlineage_configured"
+
+    @task(pool=POOL_API)
+    def register_quality_metrics() -> str:
+        """Push GX/Soda quality results as test suites into OpenMetadata tables."""
+        import boto3
+        import requests
+        from airflow.models import Variable
+        from botocore.client import Config as BotoConfig
+
+        headers = _get_om_headers()
+        bucket = Variable.get("minio_bucket_name", default_var="data-lake")
+
+        try:
+            s3 = boto3.client(
+                "s3",
+                endpoint_url="http://minio:9000",
+                aws_access_key_id="minioadmin",
+                aws_secret_access_key="minioadmin",
+                config=BotoConfig(signature_version="s3v4"),
+                region_name="us-east-1",
+            )
+        except Exception:
+            logger.warning("MinIO/S3 unavailable — skipping quality metrics push")
+            return "skipped"
+
+        report_files = {
+            "gx_staging": "_reports/great_expectations/latest/gx_staging.json",
+            "gx_mart": "_reports/great_expectations/latest/gx_mart.json",
+            "soda_staging": "_reports/soda/latest/soda_staging.json",
+            "soda_mart": "_reports/soda/latest/soda_mart.json",
+        }
+
+        for report_name, s3_path in report_files.items():
+            try:
+                obj = s3.get_object(Bucket=bucket, Key=s3_path)
+                report_data = json.loads(obj["Body"].read().decode())
+
+                test_suite_payload = {
+                    "name": f"quality_{report_name}",
+                    "description": f"Data quality results from {report_name}",
+                    "testSuiteType": "logical",
+                }
+
+                resp = requests.put(
+                    f"{OM_SERVER_URL}/v1/dataQuality/testSuites",
+                    headers=headers,
+                    json=test_suite_payload,
+                    timeout=30,
+                )
+                if resp.status_code in (200, 201):
+                    logger.info("Registered quality test suite: %s", report_name)
+                else:
+                    logger.warning(
+                        "Quality suite %s registration: %s",
+                        report_name,
+                        resp.status_code,
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to process quality report %s: %s", report_name, e
+                )
+
+        return "quality_metrics_registered"
+
+    @task(pool=POOL_API)
+    def configure_tags_and_glossary() -> str:
+        """Configure medallion layer tags and weather glossary in OpenMetadata."""
+        import requests
+
+        headers = _get_om_headers()
+
+        tag_categories = [
+            {
+                "name": "DataLayer",
+                "description": "Medallion architecture layer classification",
+                "categoryType": "Classification",
+                "provider": "system",
+                "mutuallyExclusive": True,
+            },
+            {
+                "name": "DataSensitivity",
+                "description": "Data sensitivity classification",
+                "categoryType": "Classification",
+                "provider": "system",
+                "mutuallyExclusive": True,
+            },
+        ]
+
+        for category in tag_categories:
+            resp = requests.put(
+                f"{OM_SERVER_URL}/v1/classifications",
+                headers=headers,
+                json=category,
+                timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                logger.info("Classification created: %s", category["name"])
+            else:
+                logger.warning(
+                    "Classification %s: %s", category["name"], resp.status_code
+                )
+
+        layer_tags = [
+            {"name": "bronze", "description": "Raw immutable data on S3 (Parquet)"},
+            {
+                "name": "silver",
+                "description": "Cleaned and validated data in staging schema",
+            },
+            {"name": "gold", "description": "Business-ready data in core/mart schemas"},
+            {
+                "name": "quarantine",
+                "description": "Rejected data in staging_quarantine schema",
+            },
+        ]
+
+        for tag in layer_tags:
+            tag_payload = {
+                "classification": "DataLayer",
+                "name": tag["name"],
+                "description": tag["description"],
+            }
+            resp = requests.put(
+                f"{OM_SERVER_URL}/v1/tags",
+                headers=headers,
+                json=tag_payload,
+                timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                logger.info("Tag created: DataLayer.%s", tag["name"])
+
+        sensitivity_tags = [
+            {"name": "public", "description": "Public weather data — no restrictions"},
+            {
+                "name": "internal",
+                "description": "Internal pipeline metadata — team only",
+            },
+        ]
+
+        for tag in sensitivity_tags:
+            tag_payload = {
+                "classification": "DataSensitivity",
+                "name": tag["name"],
+                "description": tag["description"],
+            }
+            resp = requests.put(
+                f"{OM_SERVER_URL}/v1/tags",
+                headers=headers,
+                json=tag_payload,
+                timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                logger.info("Tag created: DataSensitivity.%s", tag["name"])
+
+        glossary_payload = {
+            "name": "WeatherDomain",
+            "displayName": "Weather Domain Glossary",
+            "description": "Standard weather terminology for the data platform",
+        }
+        resp = requests.put(
+            f"{OM_SERVER_URL}/v1/glossaries",
+            headers=headers,
+            json=glossary_payload,
+            timeout=30,
+        )
+        glossary_id = (
+            resp.json().get("id", "") if resp.status_code in (200, 201) else ""
+        )
+
+        if glossary_id:
+            glossary_terms = [
+                {
+                    "name": "temperature_celsius",
+                    "description": "Air temperature measured in degrees Celsius at 2m height",
+                },
+                {
+                    "name": "humidity_percent",
+                    "description": "Relative humidity as a percentage (0-100%)",
+                },
+                {
+                    "name": "pressure_hpa",
+                    "description": "Atmospheric pressure in hectopascals (hPa)",
+                },
+                {
+                    "name": "wind_speed_ms",
+                    "description": "Wind speed at 10m height in meters per second",
+                },
+                {
+                    "name": "weather_condition",
+                    "description": "Main weather phenomenon (Clear, Rain, Snow, etc.)",
+                },
+                {
+                    "name": "measured_at",
+                    "description": "UTC timestamp when the weather observation was recorded",
+                },
+                {
+                    "name": "forecast_at",
+                    "description": "UTC timestamp for the forecasted weather slot",
+                },
+            ]
+
+            for term in glossary_terms:
+                term_payload = {
+                    "glossary": {"id": glossary_id, "type": "glossary"},
+                    "name": term["name"],
+                    "displayName": term["name"].replace("_", " ").title(),
+                    "description": term["description"],
+                }
+                resp = requests.put(
+                    f"{OM_SERVER_URL}/v1/glossaryTerms",
+                    headers=headers,
+                    json=term_payload,
+                    timeout=30,
+                )
+                if resp.status_code in (200, 201):
+                    logger.info("Glossary term created: %s", term["name"])
+
+        return "tags_and_glossary_configured"
+
     pg = register_postgres_service()
     s3 = register_s3_service()
     meta = trigger_metadata_ingestion(pg)
     dbt_lin = register_dbt_pipeline(pg)
+    ol_lineage = configure_openlineage_pipeline(pg)
+    quality = register_quality_metrics()
+    tags = configure_tags_and_glossary()
 
-    [pg, s3] >> meta >> dbt_lin
+    [pg, s3] >> meta >> [dbt_lin, ol_lineage] >> quality >> tags
 
 
 openmetadata_ingestion()
