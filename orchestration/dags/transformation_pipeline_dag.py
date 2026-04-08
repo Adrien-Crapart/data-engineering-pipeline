@@ -1,17 +1,19 @@
 """
 Transformation Pipeline DAG — Transform staging data to core/mart/analytic
-via dbt-duckdb Docker, validate quality, generate docs, and push metrics.
+via Cosmos DbtTaskGroup (Docker execution), validate quality, generate docs.
 
 Flow:
-  1. dbt_run_transform    — dbt run core/marts/analytic models (reads PG staging, writes PG core/mart)
-  2. gx_validate_core     — Great Expectations checks on core tables
-  3. soda_scan_core       — Soda scan on core tables
-  4. gx_validate_mart     — Great Expectations checks on mart tables
-  5. soda_scan_mart       — Soda scan on mart tables
-  6. dbt_generate_docs    — Generate dbt docs and upload to S3
-  7. finalize             — Emit mart_weather Asset and push metrics
+  1. dbt_transform (Cosmos) — Per-model dbt run for core/marts/analytic (reads PG staging via ATTACH)
+  2. gx_validate_core       — Great Expectations checks on core tables
+  3. soda_scan_core         — Soda scan on core tables
+  4. gx_validate_mart       — Great Expectations checks on mart tables
+  5. soda_scan_mart         — Soda scan on mart tables
+  6. dbt_test (Cosmos)      — Per-model dbt test on all layers
+  7. dbt_generate_docs      — Generate dbt docs and upload to S3
+  8. finalize               — Emit mart_weather Asset and push metrics
 
 Schedule: Event-driven — triggered when quality_gate_pipeline emits staging_validated Asset.
+Uses Cosmos DbtTaskGroup with Docker execution mode for per-model orchestration.
 Uses dbt-duckdb: reads PG staging via ATTACH, writes to PG core/mart via ATTACH.
 """
 
@@ -20,10 +22,13 @@ from __future__ import annotations
 import logging
 import os
 from datetime import timedelta
+from pathlib import Path
 
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import Asset, dag, task
 from airflow.sdk.bases.operator import chain
+from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
+from cosmos.constants import ExecutionMode, LoadMode, TestBehavior
 from docker.types import Mount
 from plugins.callbacks.handlers import (
     on_failure_callback,
@@ -48,13 +53,12 @@ logger = logging.getLogger(__name__)
 staging_validated = Asset(name="staging_validated", uri=ASSET_STAGING_VALIDATED)
 mart_weather = Asset(name="mart_weather", uri=ASSET_MART_WEATHER)
 
-DBT_VENV_PATH = "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 HOST_PROJECT_ROOT = os.environ.get("PROJECT_ROOT", ".")
 
 DBT_MOUNTS = [Mount(source=f"{HOST_PROJECT_ROOT}/transformations", target="/app", type="bind")]
 
 DBT_COMMON_ENV = {
-    "PATH": DBT_VENV_PATH,
+    "PATH": "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
     "HOME": "/tmp",
     "POSTGRES_HOST": "postgres",
     "POSTGRES_PORT": "5432",
@@ -96,6 +100,31 @@ QUALITY_MOUNTS = [
     ),
 ]
 
+COSMOS_PROJECT_CONFIG = ProjectConfig(
+    dbt_project_path="/opt/airflow/dbt",
+)
+
+COSMOS_PROFILE_CONFIG = ProfileConfig(
+    profiles_yml_filepath=Path("/opt/airflow/dbt/profiles.yml"),
+)
+
+COSMOS_EXECUTION_CONFIG = ExecutionConfig(
+    execution_mode=ExecutionMode.DOCKER,
+    dbt_project_path="/app",
+)
+
+COSMOS_OPERATOR_ARGS = {
+    "image": DEFAULT_DBT_IMAGE,
+    "network_mode": DEFAULT_NETWORK,
+    "docker_url": "unix://var/run/docker.sock",
+    "mount_tmp_dir": False,
+    "auto_remove": "success",
+    "get_logs": True,
+    "mounts": DBT_MOUNTS,
+    "environment": DBT_COMMON_ENV,
+    "mem_limit": DEFAULT_DBT_MEM,
+}
+
 default_args = {
     "owner": "data-engineering",
     "retries": 3,
@@ -110,7 +139,7 @@ default_args = {
 
 @dag(
     dag_id="transformation_pipeline",
-    description="dbt-duckdb core/mart/analytic -> quality gates (core + mart) -> docs -> observability",
+    description="Cosmos dbt core/mart/analytic -> quality gates (core + mart) -> dbt test -> docs -> observability",
     schedule=[staging_validated],
     start_date=DAG_START_DATE,
     catchup=False,
@@ -121,6 +150,7 @@ default_args = {
         "weather",
         "transformation",
         "dbt",
+        "cosmos",
         "duckdb",
         "soda",
         "great-expectations",
@@ -146,17 +176,18 @@ default_args = {
     },
 )
 def transformation_pipeline():
-    dbt_run_transform = DockerOperator(
-        task_id="dbt_run_transform",
-        image=DEFAULT_DBT_IMAGE,
-        command="run --select staging core marts analytic",
-        network_mode=DEFAULT_NETWORK,
-        mounts=DBT_MOUNTS,
-        environment=DBT_COMMON_ENV,
-        mem_limit=DEFAULT_DBT_MEM,
-        execution_timeout=timedelta(minutes=20),
-        pool=POOL_DATABASE,
-        **DOCKER_DEFAULTS,
+    dbt_transform = DbtTaskGroup(
+        group_id="dbt_transform",
+        project_config=COSMOS_PROJECT_CONFIG,
+        profile_config=COSMOS_PROFILE_CONFIG,
+        render_config=RenderConfig(
+            load_method=LoadMode.CUSTOM,
+            select=["path:models/core", "path:models/marts", "path:models/analytic"],
+            test_behavior=TestBehavior.NONE,
+        ),
+        execution_config=COSMOS_EXECUTION_CONFIG,
+        operator_args=COSMOS_OPERATOR_ARGS,
+        default_args={"pool": POOL_DATABASE},
     )
 
     gx_validate_core = DockerOperator(
@@ -211,6 +242,20 @@ def transformation_pipeline():
         **DOCKER_DEFAULTS,
     )
 
+    dbt_test = DbtTaskGroup(
+        group_id="dbt_test",
+        project_config=COSMOS_PROJECT_CONFIG,
+        profile_config=COSMOS_PROFILE_CONFIG,
+        render_config=RenderConfig(
+            load_method=LoadMode.CUSTOM,
+            select=["path:models/staging", "path:models/core", "path:models/marts", "path:models/analytic"],
+            test_behavior=TestBehavior.AFTER_ALL,
+        ),
+        execution_config=COSMOS_EXECUTION_CONFIG,
+        operator_args=COSMOS_OPERATOR_ARGS,
+        default_args={"pool": POOL_DATABASE},
+    )
+
     dbt_generate_docs = DockerOperator(
         task_id="dbt_generate_docs",
         image=DEFAULT_DBT_IMAGE,
@@ -242,9 +287,10 @@ def transformation_pipeline():
     mart_quality = [gx_validate_mart, soda_scan_mart]
 
     chain(
-        dbt_run_transform,
+        dbt_transform,
         core_quality,
         mart_quality,
+        dbt_test,
         dbt_generate_docs,
         finalize_transformation(),
     )

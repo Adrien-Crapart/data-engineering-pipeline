@@ -107,7 +107,7 @@ TABLE_CONFIG: dict[str, dict[str, Any]] = {
         "owner_team": "data-engineering",
         "domain_tags": ["DataLayer.Gold", "DataDomain.Meteorology", "DataSensitivity.Public", "UpdateFrequency.Hourly"],
         "description": "Canonical fact table for individual weather observations. One row per city per extraction.",
-        "custom_properties": {"data_source": "OpenWeather API v2.5", "refresh_frequency": "Every 3 hours", "sla_hours": "4", "data_retention_days": "730"},
+        "custom_properties": {"data_source": "OpenWeather API v2.5", "refresh_frequency": "Every 6 hours", "sla_hours": "1", "data_retention_days": "730"},
     },
     "dim_city": {
         "schema": "core",
@@ -148,6 +148,22 @@ TABLE_CONFIG: dict[str, dict[str, Any]] = {
         "domain_tags": ["DataLayer.Gold", "DataDomain.Analytics", "DataSensitivity.Internal", "UpdateFrequency.Daily"],
         "description": "Cross-city ranking on multiple weather dimensions for comparative analysis.",
         "custom_properties": {"data_source": "Derived (dbt)", "refresh_frequency": "Daily at 03:00", "sla_hours": "12", "data_retention_days": "180"},
+    },
+    "stg_weather_current": {
+        "schema": "staging",
+        "tier": "Tier3",
+        "owner_team": "data-engineering",
+        "domain_tags": ["DataLayer.Silver", "DataDomain.Meteorology", "DataSensitivity.Public", "UpdateFrequency.Hourly"],
+        "description": "Staging table for current weather observations. Cleaned and typed from raw S3 Parquet via DuckDB.",
+        "custom_properties": {"data_source": "OpenWeather API v2.5 (via DLT)", "refresh_frequency": "Every 6 hours", "sla_hours": "1", "data_retention_days": "90"},
+    },
+    "stg_weather_forecast": {
+        "schema": "staging",
+        "tier": "Tier3",
+        "owner_team": "data-engineering",
+        "domain_tags": ["DataLayer.Silver", "DataDomain.Meteorology", "DataSensitivity.Public", "UpdateFrequency.Hourly"],
+        "description": "Staging table for weather forecast data. 5-day/3-hour forecast slots per city.",
+        "custom_properties": {"data_source": "OpenWeather API v2.5 (via DLT)", "refresh_frequency": "Every 6 hours", "sla_hours": "1", "data_retention_days": "90"},
     },
 }
 
@@ -398,9 +414,29 @@ class OMClient:
             if not domain_id:
                 continue
 
-            table_names = [t for t in domain.get("tables", [])]
-            logger.info("    Tables to assign via UI: %s", ", ".join(table_names))
-            logger.info("    (OM 1.12.x API does not support bulk domain asset assignment — use UI: table → Domains → Edit)")
+            for table_name in domain.get("tables", []):
+                cfg = TABLE_CONFIG.get(table_name)
+                if not cfg:
+                    continue
+                table = self._get_table(table_name, cfg["schema"])
+                if not table:
+                    continue
+
+                current_domain = table.get("domain")
+                if current_domain and current_domain.get("id"):
+                    logger.info("    %s: domain already assigned", table_name)
+                    continue
+
+                patches = [
+                    {"op": "add", "path": "/domain",
+                     "value": {"id": domain_id, "type": "domain"}},
+                ]
+                resp2 = self._patch(f"/tables/{table['id']}", patches)
+                if resp2 is not None and resp2.status_code in (200, 201):
+                    logger.info("    %s: assigned to domain '%s'", table_name, domain["name"])
+                elif resp2 is not None:
+                    logger.warning("    %s: domain assignment failed (%s): %s",
+                                   table_name, resp2.status_code, resp2.text[:200])
 
     # ------ Custom Properties ------
     def create_custom_properties(self) -> None:

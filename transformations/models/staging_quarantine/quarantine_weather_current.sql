@@ -1,15 +1,12 @@
 -- Quarantine table: rows from raw weather_current that fail schema/type validation.
 -- Captures rejected records for triage and debugging.
 
-{% set bucket = var('s3_bucket') %}
-{% set prefix = var('s3_raw_prefix') %}
-
 with source as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_current/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_current') }}
 ),
 
 weather_conditions as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_current__weather/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_current__weather') }}
 ),
 
 joined as (

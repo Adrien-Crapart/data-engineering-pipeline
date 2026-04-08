@@ -1,20 +1,17 @@
 -- Staging model: unnest and clean forecast entries from the raw API response.
--- Reads DLT-normalized Parquet directly from S3 via DuckDB httpfs.
+-- Reads DLT-normalized Parquet from S3 via dbt-duckdb external sources.
 -- Joins forecast list with parent city data and weather conditions.
 
-{% set bucket = var('s3_bucket') %}
-{% set prefix = var('s3_raw_prefix') %}
-
 with source as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_forecast') }}
 ),
 
 forecast_entries as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast__list/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_forecast__list') }}
 ),
 
 weather_conditions as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast__list__weather/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_forecast__list__weather') }}
 ),
 
 renamed as (

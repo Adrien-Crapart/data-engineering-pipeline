@@ -169,13 +169,26 @@ Accumulated best practices and lessons learned from building and debugging this 
 - Airflow is an **orchestrator**, NOT a runner — dbt must execute inside Docker containers, not the worker.
 - Use `DbtTaskGroup` with `ExecutionMode.DOCKER` + `LoadMode.CUSTOM` for parsing.
 - `LoadMode.CUSTOM` avoids running `dbt ls` at parse time (no dbt binary needed on scheduler).
-- `ProjectConfig(dbt_project_path=...)` provides the project path for CUSTOM parsing on the scheduler.
-- `ExecutionConfig(execution_mode=ExecutionMode.DOCKER)` tells Cosmos to use Docker operators.
-- `ProfileConfig(profiles_yml_filepath=...)` required for Docker mode (not `ProfileMapping`).
-- `operator_args` must include `image`, `network_mode`, `docker_url`, `get_logs`, etc.
+- `ProjectConfig(dbt_project_path="/opt/airflow/dbt")` — scheduler path for CUSTOM parsing.
+- `ExecutionConfig(execution_mode=ExecutionMode.DOCKER, dbt_project_path="/app")` — container path for execution.
+- `ProfileConfig(profiles_yml_filepath=Path("/opt/airflow/dbt/profiles.yml"))` — requires `pathlib.Path`.
+- `operator_args` must include `image`, `network_mode`, `docker_url`, `get_logs`, `mounts`, `environment`.
 - Mount `./transformations:/opt/airflow/dbt` on scheduler/dag-processor/worker for CUSTOM parsing.
 - The dbt container entrypoint strips `dbt` prefix: `if [ "$DBT_CMD" = "dbt" ]; then shift; fi`.
 - **NEVER** use `ExecutionMode.LOCAL` — it runs dbt inside the Airflow worker process.
+- `TestBehavior.NONE` to exclude tests from run group; separate `DbtTaskGroup` for tests.
+- `TestBehavior.AFTER_ALL` in test group runs all dbt tests after all selected models.
+- Per-model Docker execution works with dbt-duckdb because ALL models have `+database: pg`.
+- Each container starts fresh DuckDB `:memory:` + ATTACHes to PG; `ref()` resolves to PG tables.
+
+### dbt-duckdb External Sources (source() with meta.external_location)
+- dbt-duckdb supports `meta.external_location` in source YAML to define external data.
+- When `{{ source('name', 'table') }}` is compiled, dbt-duckdb registers a DuckDB view from the location.
+- Example: `external_location: "read_parquet('s3://bucket/path/*.parquet', hive_partitioning=false)"`.
+- Jinja is NOT rendered in `meta` values — paths must be hardcoded in the YAML.
+- Enables dbt `manifest.json` to contain source→model lineage edges for OM dbt agent.
+- Staging + quarantine models use `{{ source('openweather_raw', 'table') }}` instead of `read_parquet()`.
+- `_staging__sources.yml` defines all 5 DLT tables as external sources on S3.
 
 ## Docker Entrypoint Patterns
 
@@ -442,6 +455,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 | Orphan test suites accumulate | `PUT /dataQuality/testSuites` creates suites with auto-generated FQN names alongside existing short-name suites | Delete empty orphan suites (`tests` array empty) via `DELETE /dataQuality/testSuites/{id}?hardDelete=true` |
 | Pipeline sourceUrl `http://localhost:8080/dags/{id}/grid` redirects | Airflow 3.x doesn't serve grid view at that path from outside | Use `http://localhost:8080/dags/{id}` without `/grid` suffix |
 | `airflow.models.param.Param` deprecated warning | Airflow 3.x moved Param to SDK | Use `from airflow.sdk import Param` instead of `from airflow.models.param import Param` |
+| `pg_stat_statements` not installed despite `shared_preload_libraries` | Init scripts only run on first volume creation; `POSTGRES_USER` is not the superuser | Run `CREATE EXTENSION` manually with the actual superuser (`airflow`); update `02_enable_extensions.sql` for all DBs |
 | `bind source path does not exist: /mnt/c/...` | `PROJECT_ROOT` uses WSL `/mnt/c/` format; Docker Desktop expects Windows native | Set `PROJECT_ROOT=C:/Users/...` (not `/mnt/c/Users/...`) in `.env` and Airflow variables |
 | `No module named 'confluent_kafka'` in Airflow | `confluent-kafka` added to pyproject.toml but image not rebuilt | Rebuild Airflow image: `just build-airflow` then restart services |
 | `__pycache__` prevents updated plugins from loading | Python bytecode cache retains old module version after bind mount update | Delete `__pycache__` in `/opt/airflow/plugins/` and `/opt/airflow/dags/`, then restart services |
@@ -450,6 +464,12 @@ ENV PATH="/app/.venv/bin:$PATH"
 | `unsupported operand type(s) for >>: 'list' and 'list'` in DAG | Airflow `>>` operator doesn't support `list >> list` | Use `chain(task, [parallel_tasks], [parallel_tasks], next_task)` from `airflow.models.baseoperator` |
 | `AirflowSchedulerDown` alert after restart + worker at 93%+ memory | Worker OOM pressure when OM ingestion + data pipelines run concurrently; scheduler heartbeat delayed | Increase worker `mem_limit` (4G → 5G) and reservation (2G → 2560M); use `docker compose up -d --force-recreate` to apply |
 | `PrometheusTooManyRestarts` after container redeployment | `for: 0m` + threshold `> 2` too sensitive; `docker compose up -d` resets `process_start_time_seconds` on recreated targets | Change to `> 3` with `for: 5m` to ignore planned deployments |
+| `No dbt_project.yml found at expected path /app/dbt_project.yml` | `PROJECT_ROOT` uses `/c/Users/...` format; Docker daemon via socket doesn't resolve MSYS paths | Use Windows-native format `PROJECT_ROOT=C:/Users/...` in `.env` |
+| OM lineage tab empty (no edges) | Metadata agents not created/deployed/triggered; tables/containers not indexed in OM | Run `just om-provision` which registers services + creates+deploys+triggers metadata agents |
+| dbt sources not visible in OM | `_staging__sources.yml` had no `sources:` block; `read_parquet()` used directly | Add dbt source definitions with `meta.external_location` for dbt-duckdb external sources |
+| Cosmos `LoadMode.CUSTOM` parse error | dbt project files not accessible on scheduler | Mount `./transformations:/opt/airflow/dbt` on scheduler; use `ProjectConfig(dbt_project_path="/opt/airflow/dbt")` |
+| Cosmos Docker operator sends `--project-dir /opt/airflow/dbt` | `ProjectConfig.dbt_project_path` used for both parsing and execution | Set `ExecutionConfig(dbt_project_path="/app")` separately for Docker container path |
+| dbt-duckdb `ref()` fails across Cosmos Docker containers | Knowledge base entry outdated; `+database: pg` makes all models persist to PG | With `+database: pg` on ALL models, `ref()` resolves to PG tables accessible in any DuckDB session |
 
 ## Ingestion CLI Architecture
 
@@ -502,11 +522,12 @@ Tools: `dbt_docs`, `great_expectations`, `soda`.
 - For non-template fields, use Python constants from `plugins.constants` module.
 - Mount `data_quality/` into `/app/data_quality` for GX/Soda containers.
 
-### dbt-duckdb In-Memory Session Constraints
-- Staging models are `+materialized: table` in DuckDB `:memory:` — ephemeral per session.
-- Core/mart/analytic models depend on staging → must run in the **same** dbt session.
-- `dbt run --select staging core marts analytic` ensures all layers built in one session.
-- The transformation DAG includes staging rebuild because DuckDB in-memory is not persistent.
+### dbt-duckdb Session & Persistence (Updated: +database: pg)
+- **ALL models** (staging, core, mart, analytic) have `+database: pg` → data persists in PostgreSQL.
+- DuckDB `:memory:` is used only as compute engine; no data persists in DuckDB itself.
+- `ref()` resolves to `pg.{schema}.{table}` — accessible in any DuckDB session via ATTACH.
+- **Per-model Cosmos Docker execution IS compatible**: each container ATTACHes to PG and reads upstream tables.
+- The transformation DAG only needs core/marts/analytic — staging already exists in PG from ingestion.
 - `--select` values must match dbt_project.yml folder names (e.g. `marts` not `mart`).
 
 ### OpenMetadata Integration
@@ -622,10 +643,28 @@ Tools: `dbt_docs`, `great_expectations`, `soda`.
 
 ### OM Setup Scripts (metadata/ folder)
 - `om_bootstrap.py`: Provisions governance (classifications, glossary, teams, users, tiers, custom properties, table configs, domains).
-- `om_setup_full.py`: Full setup (Airflow service, profiler update, test suites/cases, lineage, column descriptions, agent triggers).
+- `om_setup_full.py`: Full setup — registers PG + S3 services, creates/deploys/triggers metadata agents, Airflow service, profiler update, test suites/cases, lineage, column descriptions.
+- `om_push_test_results.py`: Parses GX/Soda/dbt test results from S3 and pushes to OM test case results API.
+- `om_create_alerts.py`: Creates observability alerts (test failures, schema changes, freshness, pipeline failures).
+- `om_create_test_agent.py`: Creates TestSuite agent for scheduled test execution.
+- `om_add_metabase_service.py`: Registers Metabase as dashboard service.
 - `just om-bootstrap`: governance provisioning.
-- `just om-setup`: full setup (tests + profiler + services + lineage + triggers).
+- `just om-setup`: full setup (services + agents + tests + lineage + triggers).
+- `just om-provision`: unified command — runs all scripts in sequence.
 - `just om-export`: exports current OM config to JSON.
+
+### OM Metadata Agents (Critical for Lineage)
+- **Lineage requires indexed metadata** — tables/containers must exist in OM before lineage edges can be created.
+- `om_setup_full.py` registers services AND creates/deploys/triggers metadata agents:
+  1. `datawarehouse_metadata` — PG metadata agent (indexes staging/core/mart/analytic tables).
+  2. `minio_metadata` — S3 storage metadata agent (indexes data-lake bucket containers).
+  3. `datawarehouse_dbt` — dbt agent (imports manifest.json/catalog.json from S3, creates lineage).
+- Agents run inside OM's embedded Airflow (openmetadata-ingestion container).
+- Agent creation: `POST /services/ingestionPipelines` with `airflowConfig` block.
+- Agent deployment: `POST /services/ingestionPipelines/deploy/{id}` (creates DAG in OM Airflow).
+- Agent trigger: `POST /services/ingestionPipelines/trigger/{id}` (runs the DAG).
+- dbt agent needs `dbtSecurityConfig` with MinIO credentials to access S3 manifest.
+- First `om-provision` run may have partial lineage (agents still running); re-run after ~5min.
 
 ### OM Lineage API (`PUT /api/v1/lineage`)
 - Use `PUT /api/v1/lineage` (not POST) to create edges. Idempotent — safe to re-run.
@@ -700,6 +739,65 @@ Tools: `dbt_docs`, `great_expectations`, `soda`.
  2. Creates all observability alerts with destinations.
 - **When to use**: First-time setup or after OM reset.
 - **Idempotent**: Safe to re-run, cleans up existing agents/alerts first.
+
+### OM Full Provisioning (`just om-provision`)
+- **Single command** to provision all OM configuration: governance + tests + lineage + alerts + dashboards.
+- **Execution order**:
+ 1. `om_bootstrap.py` — classifications, glossary, teams, users, domains, table configs (tags, tiers, owners, custom properties).
+ 2. `om_setup_full.py` — test suites/cases, lineage (table→table + S3→staging + pipeline→table), Airflow sync, contracts, column descriptions.
+ 3. `om_push_test_results.py` — reads GX/Soda/dbt JSON reports from S3 `_reports/*/latest/`, pushes results via `PUT /dataQuality/testCases/{fqn}/testCaseResult`.
+ 4. `om_create_alerts.py` — test failure, schema change, freshness, new table, pipeline failure, incident alerts.
+ 5. `om_create_test_agent.py` — TestSuite agent for scheduled OM-native test execution.
+- **Idempotent**: all scripts use `PUT` (upsert), check existence before creating, skip if already configured.
+- **Flags**: `--dry-run` for preview, `--skip-trigger` to skip agent triggers.
+
+### OM Test Result Push Pattern (`om_push_test_results.py`)
+- Reads S3 reports: `_reports/great_expectations/latest/gx_{layer}.json`, `_reports/soda/latest/soda_{layer}.json`, `_reports/dbt_docs/latest/run_results.json`.
+- Maps GX/Soda results to OM test cases by matching `{table_fqn}.testSuite.{table}_{testType}` FQN pattern.
+- Pushes via `PUT /api/v1/dataQuality/testCases/{fqn}/testCaseResult` with `testCaseStatus`, `timestamp`, `result`.
+- Populates **Data Observability > Data Quality** tab on each table in OM UI.
+- Also called by `register_quality_metrics` task in `openmetadata_ingestion` DAG.
+
+### OM Domain Assignment via API (OM 1.12.x)
+- Domains CAN be assigned to tables via `PATCH /api/v1/tables/{id}` with JSON Patch:
+  `[{"op": "add", "path": "/domain", "value": {"id": "<domain_id>", "type": "domain"}}]`
+- `om_bootstrap.py` now assigns domains automatically (was previously manual-only).
+- Idempotent: checks `table.domain` before patching; skips if already assigned.
+
+### OM S3 Bronze Lineage
+- S3 containers (bronze data) linked to staging tables via `PUT /api/v1/lineage`:
+  `edge.fromEntity.type: "container"`, `edge.toEntity.type: "table"`.
+- Container FQN format: `{s3_service}.{bucket}.{path.with.dots}`.
+- Requires S3 metadata agent to have indexed containers first; logs warning if not found.
+
+### OM Dashboard Services (Grafana + Metabase)
+- **Grafana**: `om_add_grafana_service.py` — requires `--token glsa_xxx` (service account token).
+- **Metabase**: `om_add_metabase_service.py` — uses Metabase admin credentials.
+- Both use `PUT /api/v1/services/dashboardServices` (idempotent).
+- After registration, create Metadata Agent via OM UI → Services → {service} → Agents → Add Agent.
+
+### OM Alert Types (Complete List)
+- **Test Failure** (`quality_test_failure_critical`): Failed/Aborted test results → Slack + Email.
+- **Schema Change** (`schema_change_detection`): Column modifications → Slack.
+- **Data Freshness** (`data_freshness_failure`): Freshness test failures → Slack + Email.
+- **New Table** (`new_table_detected`): Table creation events → Slack.
+- **Pipeline Failure** (`pipeline_failure_alert`): Ingestion pipeline status changes → Slack + Email.
+- **Incident** (`incident_created_alert`): Test case result updates (incident state changes) → Slack + Email.
+
+### dbt test in Transformation DAG
+- `dbt_test` task added after quality checks (GX + Soda) and before `dbt_generate_docs`.
+- Command: `test --select staging core marts analytic`.
+- `run_results.json` from `dbt test` is uploaded to S3 via `upload_docs.py` (docs entrypoint).
+- Results parsed by `om_push_test_results.py` for OM integration.
+
+### PostgreSQL Extensions & Superuser
+- The actual PG superuser is `airflow` (created by first `POSTGRES_USER` on initial volume creation).
+- `datawarehouse_user` (current `POSTGRES_USER` in `.env`) is NOT superuser — cannot `CREATE EXTENSION`.
+- `shared_preload_libraries=pg_stat_statements` in compose `command:` loads the library at server startup.
+- `CREATE EXTENSION IF NOT EXISTS pg_stat_statements;` must be run per-database by a superuser.
+- Init scripts (`docker-entrypoint-initdb.d/`) only execute on **first volume creation** — not on restarts.
+- All 6 databases need the extension: `postgres`, `datawarehouse`, `airflow`, `openmetadata`, `openmetadata_airflow`, `metabase`.
+- The actual OM database name is `openmetadata` (not `openmetadata_db`) — check `pg_database` to confirm.
 
 ## Update Protocol
 

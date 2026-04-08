@@ -1,74 +1,42 @@
 {
-  "exported_at": "2026-04-02T14:48:56Z",
+  "exported_at": "2026-04-04T21:56:48Z",
   "tables": {
     "fct_weather_observation": {
-      "id": "5e728ec4-800a-4993-98ce-f3208dd6324a",
+      "id": "21b3b85a-316c-4db1-b625-ca2227a6d0dd",
       "fqn": "datawarehouse.datawarehouse.core.fct_weather_observation",
-      "description": "Canonical fact table for individual weather observations. One row per city per extraction.",
-      "tags": [
-        "DataDomain.Meteorology",
-        "DataLayer.Gold",
-        "DataSensitivity.Public",
-        "Tier.Tier1",
-        "UpdateFrequency.Hourly"
-      ],
-      "owners": [
-        "data-engineering"
-      ],
+      "description": "Canonical fact table for individual weather observations. One row per city per extraction.\n\n---\n\n**Data Contract \u2014 Weather Observation Fact Table**\n\n- **Owner**: Data Engineering Team\n- **SLA**: Data must be available within 30 minutes of API extraction\n- **Freshness**: Maximum 6 hours lag (aligned with ingestion schedule)\n- **Schema**: 15 columns, no schema changes without approval\n- **Quality**: row_id unique & not null, temperature in [-60, 60]\u00b0C, humidity in [0, 100]%, country_code = 'FR'\n- **Retention**: Unlimited (append-only fact table)\n- **Consumers**: mart.weather_daily_summary, mart.city_weather_metrics",
+      "tags": [],
+      "owners": [],
       "domain": null
     },
     "dim_city": {
-      "id": "3f85c417-8300-488c-8909-5ed8d946142f",
+      "id": "43e78474-21ff-4218-a9b3-28ebea181a60",
       "fqn": "datawarehouse.datawarehouse.core.dim_city",
-      "description": "Conformed city dimension. Deduplicates city metadata into a single authoritative reference.",
-      "tags": [
-        "DataDomain.Geography",
-        "DataLayer.Gold",
-        "DataSensitivity.Public",
-        "Tier.Tier1",
-        "UpdateFrequency.Weekly"
-      ],
-      "owners": [
-        "data-engineering"
-      ],
+      "description": "Conformed city dimension. Deduplicates city metadata into a single authoritative reference.\n\n---\n\n**Data Contract \u2014 City Dimension**\n\n- **Owner**: Data Engineering Team\n- **SLA**: Updated after each ingestion pipeline run\n- **Schema**: 4 columns (city_name, country_code, latitude, longitude)\n- **Quality**: city_name unique & not null, coordinates within France bounds\n- **Consumers**: mart.city_weather_metrics",
+      "tags": [],
+      "owners": [],
       "domain": null
     },
     "weather_daily_summary": {
-      "id": "4003897f-cd5e-4fb4-91ca-8b9b43fc455d",
+      "id": "b4779f5c-2958-4a70-b503-60a853a125a2",
       "fqn": "datawarehouse.datawarehouse.mart.weather_daily_summary",
-      "description": "Daily weather summary per city. Aggregates observations and forecasts into daily min/max/avg.",
-      "tags": [
-        "DataDomain.Meteorology",
-        "DataLayer.Gold",
-        "DataSensitivity.Public",
-        "Tier.Tier2",
-        "UpdateFrequency.Daily"
-      ],
-      "owners": [
-        "data-analytics"
-      ],
+      "description": "Daily weather summary per city. Aggregates observations and forecasts into daily min/max/avg.\n\n---\n\n**Data Contract \u2014 Daily Weather Summary**\n\n- **Owner**: Data Analytics Team\n- **SLA**: Available within 1 hour after transformation pipeline completes\n- **Freshness**: Updated daily, one row per city per day\n- **Quality**: observation_count >= 1, temperatures in valid range, no null city_name or date_day\n- **Consumers**: analytic.weather_trend_analysis, BI dashboards",
+      "tags": [],
+      "owners": [],
       "domain": null
     },
     "city_weather_metrics": {
-      "id": "98fdebb3-a4b1-4760-8029-405b7ffb1ce7",
+      "id": "a69cd69b-5e1f-4d27-b5bd-2551e9a34631",
       "fqn": "datawarehouse.datawarehouse.mart.city_weather_metrics",
-      "description": "Aggregated weather metrics per city across all available data for city comparison dashboards.",
-      "tags": [
-        "DataDomain.Analytics",
-        "DataLayer.Gold",
-        "DataSensitivity.Public",
-        "Tier.Tier2",
-        "UpdateFrequency.Daily"
-      ],
-      "owners": [
-        "data-analytics"
-      ],
+      "description": "Aggregated weather metrics per city across all available data for city comparison dashboards.\n\n---\n\n**Data Contract \u2014 City Weather Metrics**\n\n- **Owner**: Data Analytics Team\n- **SLA**: Available within 1 hour after transformation pipeline completes\n- **Schema**: One row per city (unique city_name)\n- **Quality**: total_observations >= 1, all metrics non-null\n- **Consumers**: analytic.city_comparison_ranking, BI dashboards, ML features",
+      "tags": [],
+      "owners": [],
       "domain": null
     },
     "weather_trend_analysis": {
-      "id": "8c7ab2de-c905-4f45-88a0-cfa68350fcc0",
+      "id": "5704e6cd-fda1-4ecf-ac89-332825e98d5f",
       "fqn": "datawarehouse.datawarehouse.analytic.weather_trend_analysis",
-      "description": "Rolling 7-day weather trend analysis per city with moving averages for temperature, humidity, and wind.",
+      "description": "Rolling 7-day weather trend analysis per city with moving averages for temperature, humidity, and wind.\n\n---\n\n**Data Contract \u2014 Weather Trend Analysis**\n\n- **Owner**: Data Science Team\n- **SLA**: Available within 2 hours after transformation\n- **Quality**: 7-day moving averages in valid ranges\n- **Consumers**: Grafana dashboards, anomaly detection models",
       "tags": [
         "DataDomain.Analytics",
         "DataLayer.Gold",
@@ -82,9 +50,9 @@
       "domain": null
     },
     "city_comparison_ranking": {
-      "id": "c5a96676-c3bb-423d-891c-7b2495fba7a5",
+      "id": "729348bb-85ff-45a0-9ed8-63f02f125a63",
       "fqn": "datawarehouse.datawarehouse.analytic.city_comparison_ranking",
-      "description": "Cross-city ranking on multiple weather dimensions for comparative analysis.",
+      "description": "Cross-city ranking on multiple weather dimensions for comparative analysis.\n\n---\n\n**Data Contract \u2014 City Comparison & Ranking**\n\n- **Owner**: Data Science Team\n- **SLA**: Available within 2 hours after transformation\n- **Quality**: One row per city (unique), ranking metrics non-null\n- **Consumers**: City comparison BI reports, executive dashboards",
       "tags": [
         "DataDomain.Analytics",
         "DataLayer.Gold",

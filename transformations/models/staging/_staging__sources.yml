@@ -1,16 +1,29 @@
 version: 2
 
-# Sources are now read directly from S3 Parquet via DuckDB read_parquet().
-# This file documents the S3 data layout for reference.
-# DLT filesystem destination writes normalized tables as Parquet files:
-#   s3://data-lake/raw/openweather/data/{table_name}/*.parquet
-#
-# Tables:
-#   - weather_current              : Current weather observations per city
-#   - weather_current__weather     : Weather condition details (DLT child table)
-#   - weather_forecast             : 5-day / 3-hour forecast data (parent)
-#   - weather_forecast__list       : Unnested forecast entries (DLT child table)
-#   - weather_forecast__list__weather : Forecast weather conditions (DLT child table)
-#   - _dlt_loads                   : DLT load tracking metadata
-#   - _dlt_pipeline_state          : DLT pipeline state
-#   - _dlt_version                 : DLT schema version
+sources:
+  - name: openweather_raw
+    description: >
+      Raw weather data from OpenWeather API, ingested by DLT filesystem destination
+      to MinIO S3 as Parquet files. Bronze layer of the medallion architecture.
+      Path: s3://data-lake/raw/openweather/data/{table_name}/*.parquet
+    tables:
+      - name: weather_current
+        description: Current weather observations per city from OpenWeather Current Weather API.
+        meta:
+          external_location: "read_parquet('s3://data-lake/raw/openweather/data/weather_current/*.parquet', hive_partitioning=false)"
+      - name: weather_current__weather
+        description: Weather condition details — DLT child table joined via _dlt_parent_id.
+        meta:
+          external_location: "read_parquet('s3://data-lake/raw/openweather/data/weather_current__weather/*.parquet', hive_partitioning=false)"
+      - name: weather_forecast
+        description: 5-day / 3-hour forecast parent data per city.
+        meta:
+          external_location: "read_parquet('s3://data-lake/raw/openweather/data/weather_forecast/*.parquet', hive_partitioning=false)"
+      - name: weather_forecast__list
+        description: Unnested forecast entries — DLT child table of weather_forecast.
+        meta:
+          external_location: "read_parquet('s3://data-lake/raw/openweather/data/weather_forecast__list/*.parquet', hive_partitioning=false)"
+      - name: weather_forecast__list__weather
+        description: Forecast weather conditions — DLT child table of forecast entries.
+        meta:
+          external_location: "read_parquet('s3://data-lake/raw/openweather/data/weather_forecast__list__weather/*.parquet', hive_partitioning=false)"

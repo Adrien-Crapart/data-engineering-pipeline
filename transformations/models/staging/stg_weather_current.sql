@@ -1,16 +1,13 @@
 -- Staging model: clean and type raw current weather observations.
--- Reads DLT-normalized Parquet directly from S3 via DuckDB httpfs.
+-- Reads DLT-normalized Parquet from S3 via dbt-duckdb external sources.
 -- Joins parent table with child weather conditions table.
 
-{% set bucket = var('s3_bucket') %}
-{% set prefix = var('s3_raw_prefix') %}
-
 with source as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_current/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_current') }}
 ),
 
 weather_conditions as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_current__weather/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_current__weather') }}
 ),
 
 joined as (

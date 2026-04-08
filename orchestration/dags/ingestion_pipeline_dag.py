@@ -4,8 +4,8 @@ then transform to staging in PostgreSQL via dbt-duckdb (silver).
 
 Flow:
   1. extract_weather      — Call OpenWeather API, store Parquet on MinIO S3 via DLT
-  2. dbt_build_staging    — dbt run staging + quarantine models (DuckDB compute -> PG write)
-  3. finalize_ingestion   — Emit staging_weather Asset -> triggers quality_gate DAG
+  2. dbt_staging (Cosmos) — Per-model dbt run for staging + quarantine (DuckDB → PG ATTACH)
+  3. finalize_ingestion   — Emit staging_weather Asset → triggers quality_gate DAG
 
 Medallion layers:
   - Bronze: S3 raw Parquet (immutable, versioned)
@@ -13,7 +13,7 @@ Medallion layers:
   - Quarantine: PG staging_quarantine schema (rejected rows for triage)
 
 Uses Airflow Assets for event-driven scheduling.
-All configuration via Airflow Variables and Connections (no os.environ in tasks).
+Uses Cosmos DbtTaskGroup with Docker execution for per-model orchestration.
 Schedule: Every 6 hours (Europe/Paris timezone).
 """
 
@@ -22,10 +22,13 @@ from __future__ import annotations
 import logging
 import os
 from datetime import timedelta
+from pathlib import Path
 
 from airflow.exceptions import AirflowSkipException
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import Asset, Param, dag, task
+from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig, RenderConfig
+from cosmos.constants import ExecutionMode, LoadMode, TestBehavior
 from docker.types import Mount
 from plugins.callbacks.handlers import (
     on_failure_callback,
@@ -48,7 +51,6 @@ logger = logging.getLogger(__name__)
 
 staging_weather = Asset(name="staging_weather", uri=ASSET_STAGING_WEATHER)
 
-DBT_VENV_PATH = "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 HOST_PROJECT_ROOT = os.environ.get("PROJECT_ROOT", ".")
 
 DOCKER_DEFAULTS = {
@@ -58,7 +60,7 @@ DOCKER_DEFAULTS = {
 }
 
 DBT_ENV = {
-    "PATH": DBT_VENV_PATH,
+    "PATH": "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
     "HOME": "/tmp",
     "POSTGRES_HOST": "postgres",
     "POSTGRES_PORT": "5432",
@@ -88,14 +90,14 @@ default_args = {
 
 @dag(
     dag_id="ingestion_pipeline",
-    description="Extract weather API -> Parquet S3 (bronze) -> dbt-duckdb staging PG (silver) -> emit Asset",
+    description="Extract weather API -> Parquet S3 (bronze) -> Cosmos dbt staging PG (silver) -> emit Asset",
     schedule="0 */6 * * *",
     start_date=DAG_START_DATE,
     catchup=False,
     max_active_runs=1,
     default_args=default_args,
     on_success_callback=on_success_callback,
-    tags=["weather", "ingestion", "dlt", "dbt", "staging", "s3", "medallion"],
+    tags=["weather", "ingestion", "dlt", "dbt", "cosmos", "staging", "s3", "medallion"],
     doc_md=__doc__,
     params={
         "version": Param(
@@ -141,17 +143,35 @@ def ingestion_pipeline():
         **DOCKER_DEFAULTS,
     )
 
-    dbt_build_staging = DockerOperator(
-        task_id="dbt_build_staging",
-        image=DEFAULT_DBT_IMAGE,
-        command="run --select staging staging_quarantine",
-        network_mode=DEFAULT_NETWORK,
-        mounts=DBT_MOUNTS,
-        environment=DBT_ENV,
-        mem_limit=DEFAULT_DBT_MEM,
-        execution_timeout=timedelta(minutes=15),
-        pool=POOL_DATABASE,
-        **DOCKER_DEFAULTS,
+    dbt_staging = DbtTaskGroup(
+        group_id="dbt_staging",
+        project_config=ProjectConfig(
+            dbt_project_path="/opt/airflow/dbt",
+        ),
+        profile_config=ProfileConfig(
+            profiles_yml_filepath=Path("/opt/airflow/dbt/profiles.yml"),
+        ),
+        render_config=RenderConfig(
+            load_method=LoadMode.CUSTOM,
+            select=["path:models/staging", "path:models/staging_quarantine"],
+            test_behavior=TestBehavior.NONE,
+        ),
+        execution_config=ExecutionConfig(
+            execution_mode=ExecutionMode.DOCKER,
+            dbt_project_path="/app",
+        ),
+        operator_args={
+            "image": DEFAULT_DBT_IMAGE,
+            "network_mode": DEFAULT_NETWORK,
+            "docker_url": "unix://var/run/docker.sock",
+            "mount_tmp_dir": False,
+            "auto_remove": "success",
+            "get_logs": True,
+            "mounts": DBT_MOUNTS,
+            "environment": DBT_ENV,
+            "mem_limit": DEFAULT_DBT_MEM,
+        },
+        default_args={"pool": POOL_DATABASE},
     )
 
     @task(outlets=[staging_weather])
@@ -163,7 +183,7 @@ def ingestion_pipeline():
         logger.info("Ingestion complete — emitting staging_weather Asset")
         return "asset_emitted"
 
-    extract_weather >> dbt_build_staging >> finalize_ingestion()
+    extract_weather >> dbt_staging >> finalize_ingestion()
 
 
 ingestion_pipeline()

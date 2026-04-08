@@ -1,18 +1,15 @@
 -- Quarantine table: rows from raw weather_forecast that fail schema/type validation.
 
-{% set bucket = var('s3_bucket') %}
-{% set prefix = var('s3_raw_prefix') %}
-
 with source as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_forecast') }}
 ),
 
 forecast_entries as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast__list/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_forecast__list') }}
 ),
 
 weather_conditions as (
-    select * from read_parquet('s3://{{ bucket }}/{{ prefix }}/weather_forecast__list__weather/*.parquet', hive_partitioning=false)
+    select * from {{ source('openweather_raw', 'weather_forecast__list__weather') }}
 ),
 
 renamed as (

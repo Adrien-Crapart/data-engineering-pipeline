@@ -267,6 +267,195 @@ class OMSetup:
         return None
 
     # ---------------------------------------------------------------
+    # 0a. Register database + storage services
+    # ---------------------------------------------------------------
+    def register_database_service(self) -> str | None:
+        """Register PostgreSQL datawarehouse as a Database Service."""
+        logger.info("=" * 60)
+        logger.info("0a. REGISTER POSTGRESQL DATABASE SERVICE")
+        logger.info("=" * 60)
+
+        payload = {
+            "name": DB_SERVICE,
+            "displayName": "Data Warehouse (PostgreSQL)",
+            "description": "PostgreSQL 16 — stores staging, core, mart, analytic schemas.",
+            "serviceType": "Postgres",
+            "connection": {
+                "config": {
+                    "type": "Postgres",
+                    "scheme": "postgresql+psycopg2",
+                    "hostPort": "postgres:5432",
+                    "username": "datawarehouse_user",
+                    "authType": {"password": "datawarehouse_password"},
+                    "database": "datawarehouse",
+                }
+            },
+        }
+        resp = self._put("/services/databaseServices", payload)
+        if resp is not None and resp.status_code in (200, 201):
+            svc_id = resp.json()["id"]
+            logger.info("  PG service created/updated (id=%s)", svc_id[:8])
+            return svc_id
+        if resp is not None:
+            logger.warning("  Failed (%s): %s", resp.status_code, resp.text[:300])
+        return None
+
+    def register_storage_service(self) -> str | None:
+        """Register MinIO S3 as a Storage Service."""
+        logger.info("=" * 60)
+        logger.info("0b. REGISTER MINIO S3 STORAGE SERVICE")
+        logger.info("=" * 60)
+
+        payload = {
+            "name": "minio-data-lake",
+            "displayName": "MinIO Data Lake (S3)",
+            "description": "MinIO S3-compatible storage — raw Parquet (bronze), reports, dbt docs.",
+            "serviceType": "S3",
+            "connection": {
+                "config": {
+                    "type": "S3",
+                    "awsConfig": {
+                        "awsAccessKeyId": "minioadmin",
+                        "awsSecretAccessKey": "minioadmin",
+                        "awsRegion": "us-east-1",
+                        "endPointURL": "http://minio:9000",
+                    },
+                }
+            },
+        }
+        resp = self._put("/services/storageServices", payload)
+        if resp is not None and resp.status_code in (200, 201):
+            svc_id = resp.json()["id"]
+            logger.info("  S3 service created/updated (id=%s)", svc_id[:8])
+            return svc_id
+        if resp is not None:
+            logger.warning("  Failed (%s): %s", resp.status_code, resp.text[:300])
+        return None
+
+    # ---------------------------------------------------------------
+    # 0c. Create, deploy, trigger metadata agents
+    # ---------------------------------------------------------------
+    def create_and_deploy_agents(self, pg_service_id: str | None, s3_service_id: str | None) -> None:
+        """Create metadata agents for PG, S3, and dbt, then deploy and trigger them."""
+        logger.info("=" * 60)
+        logger.info("0c. CREATE & DEPLOY METADATA AGENTS")
+        logger.info("=" * 60)
+
+        if pg_service_id:
+            self._ensure_agent(
+                name="datawarehouse_metadata",
+                pipeline_type="metadata",
+                service_id=pg_service_id,
+                service_type="databaseService",
+                source_config={
+                    "type": "DatabaseMetadata",
+                    "markDeletedTables": True,
+                    "includeTables": True,
+                    "includeViews": True,
+                    "schemaFilterPattern": {
+                        "includes": ["staging", "staging_quarantine", "core", "mart", "analytic"],
+                    },
+                },
+            )
+
+            self._ensure_agent(
+                name="datawarehouse_dbt",
+                pipeline_type="dbt",
+                service_id=pg_service_id,
+                service_type="databaseService",
+                source_config={
+                    "type": "DBT",
+                    "dbtConfigSource": {
+                        "dbtConfigType": "s3",
+                        "dbtPrefixConfig": {
+                            "dbtBucketName": "data-lake",
+                            "dbtObjectPrefix": "_reports/dbt_docs/latest",
+                        },
+                        "dbtSecurityConfig": {
+                            "awsAccessKeyId": "minioadmin",
+                            "awsSecretAccessKey": "minioadmin",
+                            "awsRegion": "us-east-1",
+                            "endPointURL": "http://minio:9000",
+                        },
+                    },
+                    "dbtUpdateDescriptions": True,
+                },
+            )
+
+        if s3_service_id:
+            self._ensure_agent(
+                name="minio_metadata",
+                pipeline_type="metadata",
+                service_id=s3_service_id,
+                service_type="storageService",
+                source_config={
+                    "type": "StorageMetadata",
+                    "containerFilterPattern": {
+                        "includes": ["data-lake"],
+                    },
+                },
+            )
+
+    def _ensure_agent(self, name: str, pipeline_type: str,
+                      service_id: str, service_type: str,
+                      source_config: dict) -> None:
+        """Create (or update) an ingestion pipeline, then deploy and trigger it."""
+        existing = self._get(f"/services/ingestionPipelines?limit=50")
+        found_id = None
+        if existing.status_code == 200:
+            for p in existing.json().get("data", []):
+                if p.get("name", "") == name:
+                    found_id = p["id"]
+                    break
+
+        if found_id:
+            logger.info("  Agent '%s' already exists (id=%s) — triggering", name, found_id[:8])
+            self._deploy_and_trigger(found_id, name)
+            return
+
+        payload = {
+            "name": name,
+            "pipelineType": pipeline_type,
+            "service": {"id": service_id, "type": service_type},
+            "sourceConfig": {"config": source_config},
+            "airflowConfig": {
+                "pausePipeline": False,
+                "concurrency": 1,
+                "startDate": "2026-01-01",
+                "retries": 0,
+            },
+        }
+
+        resp = self._post(f"/services/ingestionPipelines", payload)
+        if resp is not None and resp.status_code in (200, 201):
+            pid = resp.json()["id"]
+            logger.info("  Agent '%s' created (id=%s)", name, pid[:8])
+            self._deploy_and_trigger(pid, name)
+        elif resp is not None and resp.status_code in (400, 409):
+            logger.info("  Agent '%s' config exists (status=%s)", name, resp.status_code)
+        elif resp is not None:
+            logger.warning("  Agent '%s' creation failed (%s): %s", name, resp.status_code, resp.text[:300])
+
+    def _deploy_and_trigger(self, pipeline_id: str, name: str) -> None:
+        """Deploy then trigger an ingestion pipeline."""
+        if self.dry_run:
+            logger.info("  [DRY-RUN] Would deploy+trigger %s", name)
+            return
+
+        deploy_resp = self._post(f"/services/ingestionPipelines/deploy/{pipeline_id}", {})
+        if deploy_resp is not None and deploy_resp.status_code in (200, 201):
+            logger.info("    Deployed '%s'", name)
+        elif deploy_resp is not None:
+            logger.warning("    Deploy '%s' failed (%s) — trying trigger anyway", name, deploy_resp.status_code)
+
+        trigger_resp = self._post(f"/services/ingestionPipelines/trigger/{pipeline_id}", {})
+        if trigger_resp is not None and trigger_resp.status_code in (200, 201):
+            logger.info("    Triggered '%s'", name)
+        elif trigger_resp is not None:
+            logger.warning("    Trigger '%s' failed (%s): %s", name, trigger_resp.status_code,
+                           trigger_resp.text[:200])
+
+    # ---------------------------------------------------------------
     # 1. Register Airflow as Pipeline Service + Metadata Agent
     # ---------------------------------------------------------------
     def register_airflow_service(self) -> None:
@@ -319,13 +508,14 @@ class OMSetup:
         current_includes = current_config.get("schemaFilterPattern", {}).get("includes", [])
         logger.info("  Current schema includes: %s", current_includes)
 
-        if "staging" in current_includes:
-            logger.info("  Profiler already includes staging — no changes needed")
+        required_schemas = {"staging", "core", "mart", "analytic"}
+        if required_schemas.issubset(set(current_includes)):
+            logger.info("  Profiler already includes all schemas — no changes needed")
             return
 
         new_config = {**current_config}
         new_config["schemaFilterPattern"] = {
-            "includes": ["core", "mart", "analytic", "staging"],
+            "includes": sorted(required_schemas | set(current_includes)),
             "excludes": [],
         }
 
@@ -446,6 +636,54 @@ class OMSetup:
             elif resp is not None:
                 logger.warning("    ! %s → %s FAILED (%s): %s",
                                from_st, to_st, resp.status_code, resp.text[:300])
+
+        self._create_s3_bronze_lineage()
+
+    def _create_s3_bronze_lineage(self) -> None:
+        """Create lineage edges from S3 bronze containers to staging tables."""
+        logger.info("\n  --- S3 Bronze → Staging Lineage ---")
+        s3_service_name = "minio-data-lake"
+
+        s3_to_staging = [
+            ("raw/openweather/data/weather_current", "staging.stg_weather_current",
+             "DLT filesystem → dbt read_parquet(): raw Parquet to staging"),
+            ("raw/openweather/data/weather_forecast", "staging.stg_weather_forecast",
+             "DLT filesystem → dbt read_parquet(): raw Parquet to staging"),
+        ]
+
+        resp = self._get(f"/services/storageServices/name/{s3_service_name}")
+        if resp.status_code != 200:
+            logger.warning("  S3 service '%s' not found — skipping bronze lineage", s3_service_name)
+            return
+
+        for s3_path, to_st, desc in s3_to_staging:
+            to_schema, to_table = to_st.split(".", 1)
+            to_id = self._get_table_id(to_schema, to_table)
+            if not to_id:
+                logger.warning("  SKIP S3:%s → %s (table not found)", s3_path, to_st)
+                continue
+
+            container_fqn = f"{s3_service_name}.data-lake.{s3_path.replace('/', '.')}"
+            cr = self._get(f"/containers/name/{container_fqn}")
+            if cr.status_code == 200:
+                container_id = cr.json()["id"]
+                payload = {
+                    "edge": {
+                        "fromEntity": {"id": container_id, "type": "container"},
+                        "toEntity": {"id": to_id, "type": "table"},
+                        "lineageDetails": {
+                            "description": desc,
+                            "source": "Manual",
+                        },
+                    },
+                }
+                resp2 = self._put("/lineage", payload)
+                if resp2 is not None and resp2.status_code in (200, 201):
+                    logger.info("    + S3:%s → %s OK", s3_path, to_st)
+                elif resp2 is not None:
+                    logger.info("    ~ S3:%s → %s (%s)", s3_path, to_st, resp2.status_code)
+            else:
+                logger.info("    ~ S3 container '%s' not yet indexed — run S3 metadata agent first", container_fqn)
 
     def _get_or_create_pipeline(self, dag_id: str, display: str, description: str) -> str | None:
         """Get or create an Airflow pipeline entity in OM."""
@@ -1178,6 +1416,14 @@ class OMSetup:
     # ---------------------------------------------------------------
     def run(self) -> None:
         self.authenticate()
+
+        pg_id = self.register_database_service()
+        s3_id = self.register_storage_service()
+        self.create_and_deploy_agents(pg_id, s3_id)
+
+        logger.info("\n  Waiting 10s for agents to start indexing metadata...")
+        time.sleep(10)
+
         self.register_airflow_service()
         self.update_profiler_agent()
         self.create_test_suites()
@@ -1192,10 +1438,10 @@ class OMSetup:
         logger.info("=" * 60)
         logger.info("Next steps:")
         logger.info("  1. Wait for agents to complete (~5-10 min)")
-        logger.info("  2. Check lineage: OM UI → table → Lineage tab")
-        logger.info("  3. Check executions: OM UI → pipeline → Executions tab")
-        logger.info("  4. Check contracts: OM UI → table → Contract tab")
-        logger.info("  5. Check tests: OM UI → table → Data Observability → Data Quality")
+        logger.info("  2. Re-run 'just om-provision' to complete lineage after agents finish")
+        logger.info("  3. Check lineage: OM UI → table → Lineage tab")
+        logger.info("  4. Check tests: OM UI → table → Data Observability → Data Quality")
+        logger.info("  5. Check contracts: OM UI → table → Contract tab")
 
 
 def main() -> None:

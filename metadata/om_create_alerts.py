@@ -81,7 +81,10 @@ class OMAlertCreator:
         alerts = resp.json().get("data", [])
         our_alerts = [
             a for a in alerts
-            if a.get("name", "").startswith(("quality_test_failure", "schema_change", "data_freshness", "new_table"))
+            if a.get("name", "").startswith((
+                "quality_test_failure", "schema_change", "data_freshness",
+                "new_table", "pipeline_failure", "incident_created",
+            ))
         ]
 
         if not our_alerts:
@@ -284,6 +287,82 @@ class OMAlertCreator:
         elif resp is not None:
             logger.warning("  ✗ Failed (%s): %s", resp.status_code, resp.text[:400])
 
+    def create_pipeline_failure_alert(self, destinations: dict) -> None:
+        """Create alert for pipeline/ingestion failures."""
+        logger.info("Creating pipeline failure alert...")
+
+        dest_ids = [d for d in destinations.values() if d]
+        if not dest_ids:
+            logger.warning("  Skipping (no destinations configured)")
+            return
+
+        payload = {
+            "name": "pipeline_failure_alert",
+            "displayName": "Pipeline Failure Alert",
+            "description": "Alert when ingestion or pipeline execution fails",
+            "alertType": "EntityUpdated",
+            "triggerConfig": {
+                "type": "EntityUpdated",
+                "entities": ["ingestionPipeline"],
+                "filters": [
+                    {
+                        "name": "fieldName",
+                        "effect": "include",
+                        "condition": "matchAny",
+                        "arguments": ["pipelineStatuses"],
+                    }
+                ],
+            },
+            "destinations": dest_ids,
+            "enabled": True,
+            "batchSize": 10,
+            "pollInterval": 60,
+        }
+
+        resp = self._post("/events/subscriptions", payload)
+        if resp is not None and resp.status_code in (200, 201):
+            logger.info("  Pipeline failure alert created")
+        elif resp is not None:
+            logger.warning("  Failed (%s): %s", resp.status_code, resp.text[:400])
+
+    def create_incident_alert(self, destinations: dict) -> None:
+        """Create alert when incidents are created or updated."""
+        logger.info("Creating incident alert...")
+
+        dest_ids = [d for d in destinations.values() if d]
+        if not dest_ids:
+            logger.warning("  Skipping (no destinations configured)")
+            return
+
+        payload = {
+            "name": "incident_created_alert",
+            "displayName": "Incident Created / Updated",
+            "description": "Alert when a data quality incident is created or state changes",
+            "alertType": "EntityUpdated",
+            "triggerConfig": {
+                "type": "EntityUpdated",
+                "entities": ["testCase"],
+                "filters": [
+                    {
+                        "name": "fieldName",
+                        "effect": "include",
+                        "condition": "matchAny",
+                        "arguments": ["testCaseResult"],
+                    }
+                ],
+            },
+            "destinations": dest_ids,
+            "enabled": True,
+            "batchSize": 10,
+            "pollInterval": 60,
+        }
+
+        resp = self._post("/events/subscriptions", payload)
+        if resp is not None and resp.status_code in (200, 201):
+            logger.info("  Incident alert created")
+        elif resp is not None:
+            logger.warning("  Failed (%s): %s", resp.status_code, resp.text[:400])
+
     def run(self) -> None:
         """Main execution flow."""
         self.authenticate()
@@ -301,12 +380,15 @@ class OMAlertCreator:
         self.create_schema_change_alert(destinations)
         self.create_freshness_alert(destinations)
         self.create_new_table_alert(destinations)
+        self.create_pipeline_failure_alert(destinations)
+        self.create_incident_alert(destinations)
 
         logger.info("")
         logger.info("=" * 60)
         logger.info("OBSERVABILITY ALERTS CONFIGURED")
         logger.info("=" * 60)
         logger.info("View alerts: OM UI → Settings → Notifications → Alerts")
+        logger.info("Alert types: test failure, schema change, freshness, new table, pipeline failure, incident")
         logger.info("Destinations: %d configured", len(destinations))
         if destinations:
             for dest_type, dest_id in destinations.items():

@@ -298,7 +298,13 @@ def openmetadata_ingestion():
 
     @task(pool=POOL_API)
     def register_quality_metrics() -> str:
-        """Push GX/Soda quality results as test suites into OpenMetadata tables."""
+        """Push GX/Soda/dbt test results from S3 into OM test case results.
+
+        Reads JSON reports from MinIO, parses individual test outcomes,
+        and pushes results via POST /dataQuality/testCases/{fqn}/testCaseResult.
+        """
+        import time
+
         import boto3
         import requests
         from airflow.models import Variable
@@ -306,6 +312,7 @@ def openmetadata_ingestion():
 
         headers = _get_om_headers()
         bucket = Variable.get("minio_bucket_name", default_var="data-lake")
+        fqn_prefix = "datawarehouse.datawarehouse"
 
         try:
             s3 = boto3.client(
@@ -322,43 +329,85 @@ def openmetadata_ingestion():
 
         report_files = {
             "gx_staging": "_reports/great_expectations/latest/gx_staging.json",
+            "gx_core": "_reports/great_expectations/latest/gx_core.json",
             "gx_mart": "_reports/great_expectations/latest/gx_mart.json",
             "soda_staging": "_reports/soda/latest/soda_staging.json",
+            "soda_core": "_reports/soda/latest/soda_core.json",
             "soda_mart": "_reports/soda/latest/soda_mart.json",
+            "dbt_run_results": "_reports/dbt_docs/latest/run_results.json",
         }
+
+        table_map = {
+            "staging": ["stg_weather_current", "stg_weather_forecast"],
+            "core": ["fct_weather_observation", "dim_city"],
+            "mart": ["weather_daily_summary", "city_weather_metrics"],
+        }
+
+        pushed, failed = 0, 0
+        ts = int(time.time() * 1000)
+
+        def push_result(test_case_fqn: str, status: str, message: str) -> None:
+            nonlocal pushed, failed
+            payload = {
+                "timestamp": ts,
+                "testCaseStatus": status,
+                "result": message[:500],
+            }
+            try:
+                resp = requests.put(
+                    f"{OM_SERVER_URL}/v1/dataQuality/testCases/{test_case_fqn}/testCaseResult",
+                    headers=headers,
+                    json=payload,
+                    timeout=15,
+                )
+                if resp.status_code in (200, 201):
+                    pushed += 1
+                else:
+                    failed += 1
+            except Exception:
+                failed += 1
 
         for report_name, s3_path in report_files.items():
             try:
                 obj = s3.get_object(Bucket=bucket, Key=s3_path)
-                report_data = json.loads(obj["Body"].read().decode())
+                data = json.loads(obj["Body"].read().decode())
+            except Exception:
+                continue
 
-                test_suite_payload = {
-                    "name": f"quality_{report_name}",
-                    "description": f"Data quality results from {report_name}",
-                    "testSuiteType": "logical",
-                }
+            if report_name.startswith("gx_"):
+                layer = report_name.replace("gx_", "")
+                if isinstance(data, dict):
+                    for schema, tables in data.items():
+                        if not isinstance(tables, dict):
+                            continue
+                        for tbl, result in tables.items():
+                            success = result.get("success", False)
+                            st = "Success" if success else "Failed"
+                            tc_fqn = f"{fqn_prefix}.{schema}.{tbl}.testSuite.{tbl}_tableRowCountToBeBetween"
+                            push_result(tc_fqn, st, f"GX {layer}: {result.get('details', '')[:200]}")
 
-                resp = requests.put(
-                    f"{OM_SERVER_URL}/v1/dataQuality/testSuites",
-                    headers=headers,
-                    json=test_suite_payload,
-                    timeout=30,
-                )
-                if resp.status_code in (200, 201):
-                    logger.info("Registered quality test suite: %s", report_name)
-                else:
-                    logger.warning(
-                        "Quality suite %s registration: %s",
-                        report_name,
-                        resp.status_code,
-                    )
+            elif report_name.startswith("soda_"):
+                layer = report_name.replace("soda_", "")
+                for scan_result in data.get("results", []):
+                    scan_layer = scan_result.get("layer", layer)
+                    success = scan_result.get("success", False)
+                    st = "Success" if success else "Failed"
+                    for tbl in table_map.get(scan_layer, []):
+                        tc_fqn = f"{fqn_prefix}.{scan_layer}.{tbl}.testSuite.{tbl}_tableRowCountToBeBetween"
+                        push_result(tc_fqn, st, f"Soda {scan_layer}: {scan_result.get('stdout', '')[:200]}")
 
-            except Exception as e:
-                logger.warning(
-                    "Failed to process quality report %s: %s", report_name, e
-                )
+            elif report_name == "dbt_run_results":
+                for result in data.get("results", []):
+                    uid = result.get("unique_id", "")
+                    if not uid.startswith("test."):
+                        continue
+                    dbt_status = result.get("status", "")
+                    st = {"pass": "Success", "fail": "Failed"}.get(dbt_status, "Aborted")
+                    msg = result.get("message", "")
+                    logger.info("dbt test result: %s → %s", uid, st)
 
-        return "quality_metrics_registered"
+        logger.info("Quality metrics push: %d succeeded, %d failed", pushed, failed)
+        return f"pushed={pushed},failed={failed}"
 
     @task(pool=POOL_API)
     def configure_tags_and_glossary() -> str:

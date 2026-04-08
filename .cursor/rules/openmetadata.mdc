@@ -1,0 +1,97 @@
+---
+description: Rules for OpenMetadata integration — every new table, model, or pipeline must be provisioned in OM via scripts, never manually.
+globs: ["metadata/**", "orchestration/dags/openmetadata_*", "transformations/models/**"]
+alwaysApply: false
+---
+
+# OpenMetadata Provisioning Rules
+
+## Core Principle
+
+> **All OpenMetadata configuration MUST be automated via `just om-provision`.**
+> Manual UI configuration is forbidden for anything that can be scripted.
+
+## When Adding a New dbt Model / Table
+
+Every new dbt model that materializes in PostgreSQL MUST have:
+
+1. **Test cases** in `metadata/om_setup_full.py` → add entry to `TABLE_TESTS` dict:
+   ```python
+   "schema.table_name": {
+       "displayName": "Human-Readable Suite Name",
+       "tests": [
+           {"type": "tableRowCountToBeBetween", "params": {"minValue": 1, "maxValue": N}},
+           {"type": "columnValuesToBeNotNull", "column": "primary_key_col"},
+           # Add relevant column-level tests
+       ],
+   }
+   ```
+
+2. **Lineage edges** in `metadata/om_setup_full.py` → add tuple to `TABLE_LINEAGE`:
+   ```python
+   ("source_schema.source_table", "target_schema.new_table", "dbt transformation: description"),
+   ```
+
+3. **Table config** in `metadata/om_bootstrap.py` → add entry to `TABLE_CONFIG`:
+   - `schema`, `tier` (Tier1/Tier2/Tier3), `owner_team`, `domain_tags`, `description`, `custom_properties`
+
+4. **Data contract** in `metadata/om_setup_full.py` → add entry to `TABLE_CONTRACTS`
+
+5. **Column descriptions** in `metadata/om_setup_full.py` → add entry to `add_column_descriptions()`
+
+6. **GX expectations** in `data_quality/expectations/run_validations.py` → add to the relevant layer function
+
+7. **Soda checks** in `data_quality/soda/checks/{layer}_checks.yml` → add check block
+
+After all additions, run `just om-provision` to apply.
+
+## When Adding a New Airflow DAG
+
+1. Add task descriptions in `metadata/om_setup_full.py` → `TASK_DESCRIPTIONS` dict
+2. Add pipeline ownership in `metadata/om_setup_full.py` → `PIPELINE_OWNERS` dict
+3. Add pipeline-to-table lineage edges in `_create_pipeline_lineage()` → `dags` dict
+4. Run `just om-provision` to sync
+
+## When Adding a New Data Source
+
+1. Register the service in `orchestration/dags/openmetadata_ingestion_dag.py`
+2. Add schema filter patterns for the new source
+3. Update lineage edges in `metadata/om_setup_full.py`
+4. Run `just om-provision`
+
+## Idempotence Rules
+
+- All OM API calls MUST use `PUT` (upsert) instead of `POST` where possible
+- Before creating, check existence: `GET /api/v1/{resource}/name/{fqn}`
+- Before patching descriptions, check if content already present (e.g., "Data Contract" marker)
+- Scripts MUST be safe to re-run without side effects
+- Use `--dry-run` flag for preview
+
+## Script Architecture
+
+| Script | Purpose | Command |
+|--------|---------|---------|
+| `om_bootstrap.py` | Governance: classifications, glossary, teams, users, domains, table configs | `just om-bootstrap` |
+| `om_setup_full.py` | Tests, lineage, Airflow sync, contracts, column descriptions, agents | `just om-setup` |
+| `om_push_test_results.py` | Parse GX/Soda/dbt results from S3, push to OM test case results | `just om-push-results` |
+| `om_create_test_agent.py` | Create TestSuite agent for scheduled OM-native test execution | `just om-create-test-agent` |
+| `om_create_alerts.py` | Observability alerts (test failures, schema changes, freshness) | `just om-create-alerts` |
+| `om_add_grafana_service.py` | Register Grafana as dashboard service | `just om-add-grafana` |
+| `om_add_metabase_service.py` | Register Metabase as dashboard service | `just om-add-metabase` |
+
+**Unified command**: `just om-provision` runs all scripts sequentially.
+
+## Test Result Integration
+
+- GX/Soda/dbt test results are stored on S3 under `_reports/`
+- `om_push_test_results.py` reads `_reports/*/latest/*.json` and pushes results to OM via:
+  `POST /api/v1/dataQuality/testCases/{fqn}/testCaseResult`
+- This populates the **Data Observability > Data Quality** tab on each table
+- The OM DAG (`openmetadata_ingestion`) calls this after each pipeline run
+
+## Forbidden Practices
+
+- **NEVER** configure tests, tags, descriptions, or lineage manually in the OM UI if it can be scripted
+- **NEVER** use `POST` when `PUT` (idempotent upsert) is available
+- **NEVER** hardcode OM credentials — use Base64-encoded defaults matching `.env`
+- **NEVER** skip updating `om_setup_full.py` when adding new tables or pipelines

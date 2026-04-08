@@ -523,43 +523,86 @@ validate-env:
 # Bootstrap OpenMetadata governance (classifications, glossary, teams, tiers, domains)
 om-bootstrap *args='':
     @echo "--- Bootstrapping OpenMetadata configuration ---"
-    @{{ if os() == "windows" { "powershell -Command \"uv run --extra dev python metadata/om_bootstrap.py " + args + "\"" } else { "uv run --extra dev python metadata/om_bootstrap.py " + args } }}
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_bootstrap.py " + args + "\"" } else { "uv run --extra dev python metadata/om_bootstrap.py " + args } }}
 
 # Export current OpenMetadata configuration to JSON
 om-export:
     @echo "--- Exporting OpenMetadata configuration ---"
-    @{{ if os() == "windows" { "powershell -Command \"uv run --extra dev python metadata/om_bootstrap.py --export-only\"" } else { "uv run --extra dev python metadata/om_bootstrap.py --export-only" } }}
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_bootstrap.py --export-only\"" } else { "uv run --extra dev python metadata/om_bootstrap.py --export-only" } }}
 
 # Full OM setup: tests, profiler, Airflow service, column descriptions, agent triggers
 om-setup *args='':
     @echo "--- Full OpenMetadata setup (tests + profiler + services) ---"
-    @{{ if os() == "windows" { "powershell -Command \"uv run --extra dev python metadata/om_setup_full.py " + args + "\"" } else { "uv run --extra dev python metadata/om_setup_full.py " + args } }}
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_setup_full.py " + args + "\"" } else { "uv run --extra dev python metadata/om_setup_full.py " + args } }}
 
 # Create and deploy TestSuite agent for automated quality checks
 om-create-test-agent schedule="0 */6 * * *":
     @echo "--- Creating TestSuite agent (schedule: {{ schedule }}) ---"
-    @{{ if os() == "windows" { "powershell -Command \"uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'\"" } else { "uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'" } }}
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'\"" } else { "uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'" } }}
 
 # Run data quality tests on-demand
 om-run-tests wait="":
     @echo "--- Triggering data quality tests ---"
-    @{{ if os() == "windows" { if wait == "wait" { "powershell -Command \"uv run --extra dev python metadata/om_run_tests.py --wait\"" } else { "powershell -Command \"uv run --extra dev python metadata/om_run_tests.py\"" } } else { if wait == "wait" { "uv run --extra dev python metadata/om_run_tests.py --wait" } else { "uv run --extra dev python metadata/om_run_tests.py" } } }}
+    @{{ if os() == "windows" { if wait == "wait" { "powershell.exe -Command \"uv run --extra dev python metadata/om_run_tests.py --wait\"" } else { "powershell.exe -Command \"uv run --extra dev python metadata/om_run_tests.py\"" } } else { if wait == "wait" { "uv run --extra dev python metadata/om_run_tests.py --wait" } else { "uv run --extra dev python metadata/om_run_tests.py" } } }}
 
 # Create observability alerts for data quality monitoring
 om-create-alerts slack="" email="":
     @echo "--- Creating observability alerts ---"
-    @{{ if os() == "windows" { "powershell -Command \"uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) + "\"" } else { "uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) } }}
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) + "\"" } else { "uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) } }}
 
 # Complete data quality setup (agent + alerts)
 om-quality-setup schedule="0 */6 * * *" slack="" email="":
     @echo "--- Complete data quality setup ---"
     @echo "Step 1/2: Creating TestSuite agent..."
-    @{{ if os() == "windows" { "powershell -Command \"uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'\"" } else { "uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'" } }}
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'\"" } else { "uv run --extra dev python metadata/om_create_test_agent.py --schedule '" + schedule + "'" } }}
     @echo ""
     @echo "Step 2/2: Creating observability alerts..."
-    @{{ if os() == "windows" { "powershell -Command \"uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) + "\"" } else { "uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) } }}
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) + "\"" } else { "uv run --extra dev python metadata/om_create_alerts.py" + (if slack != "" { " --slack-webhook " + slack } else { "" }) + (if email != "" { " --email " + email } else { "" }) } }}
     @echo ""
     @echo "✓ Data quality setup complete!"
+
+# Push GX/Soda/dbt test results from S3 into OpenMetadata
+om-push-results *args='':
+    @echo "--- Pushing test results to OpenMetadata ---"
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_push_test_results.py " + args + "\"" } else { "uv run --extra dev python metadata/om_push_test_results.py " + args } }}
+
+# Register Metabase as dashboard service in OpenMetadata
+om-add-metabase *args='':
+    @echo "--- Registering Metabase in OpenMetadata ---"
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_add_metabase_service.py " + args + "\"" } else { "uv run --extra dev python metadata/om_add_metabase_service.py " + args } }}
+
+# Full idempotent OM provisioning (governance + tests + lineage + alerts + dashboards)
+om-provision *args='':
+    @echo ""
+    @echo "=============================================="
+    @echo "  OPENMETADATA FULL PROVISIONING"
+    @echo "=============================================="
+    @echo ""
+    @echo "--- Step 1/5: Governance (classifications, glossary, teams, domains) ---"
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_bootstrap.py " + args + "\"" } else { "uv run --extra dev python metadata/om_bootstrap.py " + args } }}
+    @echo ""
+    @echo "--- Step 2/5: Setup (tests, lineage, Airflow sync, contracts) ---"
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_setup_full.py " + args + "\"" } else { "uv run --extra dev python metadata/om_setup_full.py " + args } }}
+    @echo ""
+    @echo "--- Step 3/5: Push test results from S3 ---"
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_push_test_results.py " + args + "\"" } else { "uv run --extra dev python metadata/om_push_test_results.py " + args } }} || echo "  (skipped — no reports on S3 yet)"
+    @echo ""
+    @echo "--- Step 4/5: Create observability alerts ---"
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_create_alerts.py " + args + "\"" } else { "uv run --extra dev python metadata/om_create_alerts.py " + args } }}
+    @echo ""
+    @echo "--- Step 5/5: Create TestSuite agent ---"
+    @{{ if os() == "windows" { "powershell.exe -Command \"uv run --extra dev python metadata/om_create_test_agent.py " + args + "\"" } else { "uv run --extra dev python metadata/om_create_test_agent.py " + args } }}
+    @echo ""
+    @echo "=============================================="
+    @echo "  PROVISIONING COMPLETE"
+    @echo "=============================================="
+    @echo ""
+    @echo "Next steps:"
+    @echo "  1. Wait for agents to complete (~5-10 min)"
+    @echo "  2. OM UI → table → Data Observability → Data Quality"
+    @echo "  3. OM UI → Lineage to verify edges"
+    @echo "  4. OM UI → Settings → Notifications for alerts"
+    @echo ""
 
 # Remove all containers, volumes, and built images
 clean:
