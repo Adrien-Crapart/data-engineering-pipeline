@@ -4,6 +4,24 @@ from __future__ import annotations
 
 import pendulum
 
+
+def normalize_host_path(path: str) -> str:
+    """Convert a Windows drive path to a Docker-compatible POSIX path.
+
+    When DockerOperator bind-mounts a host directory, the path is sent
+    directly to the Docker daemon running inside Docker Desktop's Linux VM.
+    That daemon requires POSIX-absolute paths (starting with '/'), so a
+    Windows path like ``C:/Users/foo`` must become ``/c/Users/foo``.
+
+    On Linux/macOS the path is already POSIX-absolute and is returned as-is.
+    """
+    if len(path) >= 2 and path[1] == ":":
+        drive = path[0].lower()
+        rest = path[2:].replace("\\", "/")
+        return f"/{drive}{rest}"
+    return path.replace("\\", "/")
+
+
 TIMEZONE = "Europe/Paris"
 TZ = pendulum.timezone(TIMEZONE)
 DAG_START_DATE = pendulum.datetime(2025, 1, 1, tz=TIMEZONE)

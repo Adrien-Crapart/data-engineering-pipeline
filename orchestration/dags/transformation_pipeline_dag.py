@@ -46,6 +46,7 @@ from plugins.constants import (
     DEFAULT_SODA_MEM,
     POOL_DATABASE,
     POOL_DOCKER,
+    normalize_host_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,9 @@ mart_weather = Asset(name="mart_weather", uri=ASSET_MART_WEATHER)
 
 HOST_PROJECT_ROOT = os.environ.get("PROJECT_ROOT", ".")
 
-DBT_MOUNTS = [Mount(source=f"{HOST_PROJECT_ROOT}/transformations", target="/app", type="bind")]
+_HOST_ROOT = normalize_host_path(HOST_PROJECT_ROOT)
+
+DBT_MOUNTS = [Mount(source=f"{_HOST_ROOT}/transformations", target="/app", type="bind")]
 
 DBT_COMMON_ENV = {
     "PATH": "/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -94,23 +97,24 @@ QUALITY_ENV = {
 
 QUALITY_MOUNTS = [
     Mount(
-        source=f"{HOST_PROJECT_ROOT}/data_quality",
+        source=f"{_HOST_ROOT}/data_quality",
         target="/app/data_quality",
         type="bind",
     ),
 ]
 
 COSMOS_PROJECT_CONFIG = ProjectConfig(
-    dbt_project_path="/opt/airflow/dbt",
+    dbt_project_path=Path("/opt/airflow/dbt"),
 )
 
 COSMOS_PROFILE_CONFIG = ProfileConfig(
+    profile_name="weather_pipeline",
+    target_name="dev",
     profiles_yml_filepath=Path("/opt/airflow/dbt/profiles.yml"),
 )
 
 COSMOS_EXECUTION_CONFIG = ExecutionConfig(
     execution_mode=ExecutionMode.DOCKER,
-    dbt_project_path="/app",
 )
 
 COSMOS_OPERATOR_ARGS = {
@@ -248,7 +252,12 @@ def transformation_pipeline():
         profile_config=COSMOS_PROFILE_CONFIG,
         render_config=RenderConfig(
             load_method=LoadMode.CUSTOM,
-            select=["path:models/staging", "path:models/core", "path:models/marts", "path:models/analytic"],
+            select=[
+                "path:models/staging",
+                "path:models/core",
+                "path:models/marts",
+                "path:models/analytic",
+            ],
             test_behavior=TestBehavior.AFTER_ALL,
         ),
         execution_config=COSMOS_EXECUTION_CONFIG,

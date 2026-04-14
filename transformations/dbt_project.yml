@@ -44,5 +44,4 @@ models:
   elementary:
     +schema: elementary
 
-on-run-end:
-  - "{{ dbt_utils.log_info('Pipeline run completed') }}"
+on-run-end: []

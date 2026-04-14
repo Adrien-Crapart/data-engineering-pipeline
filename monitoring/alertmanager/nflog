@@ -1,0 +1,11 @@
+”
+ƒ
+P{}/{severity="critical"}:{alertname="AirflowSchedulerDown", severity="critical"}
+email-mailhogemail*¯ŸîÎê²Œ2	âú‚¬ä«•&Ï×îÎê²Œ˜
+‡
+S{}/{severity="warning"}:{alertname="PrometheusTooManyRestarts", severity="warning"}
+email-mailhogemail*½îÎÔ„ä˜2
+šÇµ¢Ÿ©ñ´¬½şïÎÔ„ä˜
+
+M{}/{severity="warning"}:{alertname="ContainerHighMemory", severity="warning"}
+email-mailhogemail*Ç´íÎÿòk:	îÀ‚¢Ù½şµÇ•ïÎÿòk

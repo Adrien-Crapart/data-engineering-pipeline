@@ -13,6 +13,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY:-81HqDtbqAywKSOumSha3BhWNOdQ26slT6K0YaZeZyPs=}
     AIRFLOW__API__SECRET_KEY: ${AIRFLOW__API__SECRET_KEY:-RMU3ZDFjNzk4YjI0M2I4OTdhZGE5NmU0Nzc2ZWEyNDQ=}
     AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-dGhpcy1pcy1hLXNlY3VyZS1qd3Qtc2VjcmV0LWtleQ==}
+    # Enable BasicAuth for the API server (useful for local/dev deployments)
+    AIRFLOW__API__AUTH_BACKEND: airflow.api.auth.backend.basic_auth
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-api-server:8080/execution/
     # AWS/MinIO credentials
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}

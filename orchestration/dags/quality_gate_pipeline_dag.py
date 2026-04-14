@@ -22,12 +22,16 @@ from datetime import timedelta
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.sdk import Asset, dag, task
 from docker.types import Mount
-from plugins.callbacks.handlers import (on_failure_callback, on_retry_callback,
-                                        on_success_callback)
-from plugins.constants import (ASSET_STAGING_VALIDATED, ASSET_STAGING_WEATHER,
-                               DAG_START_DATE, DEFAULT_NETWORK,
-                               DEFAULT_SODA_IMAGE, DEFAULT_SODA_MEM,
-                               POOL_DATABASE)
+from plugins.callbacks.handlers import on_failure_callback, on_retry_callback, on_success_callback
+from plugins.constants import (
+    ASSET_STAGING_VALIDATED,
+    ASSET_STAGING_WEATHER,
+    DAG_START_DATE,
+    DEFAULT_NETWORK,
+    DEFAULT_SODA_IMAGE,
+    DEFAULT_SODA_MEM,
+    POOL_DATABASE,
+)
 
 logger = logging.getLogger(__name__)
 

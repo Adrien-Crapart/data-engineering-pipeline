@@ -56,3 +56,6 @@ htmlcov/
 # DuckDB
 *.duckdb
 *.duckdb.wal
+
+# claude
+settings.local.json

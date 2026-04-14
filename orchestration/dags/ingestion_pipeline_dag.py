@@ -45,6 +45,7 @@ from plugins.constants import (
     DEFAULT_NETWORK,
     POOL_API,
     POOL_DATABASE,
+    normalize_host_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,13 @@ DBT_ENV = {
     "PYTHONUNBUFFERED": "1",
 }
 
-DBT_MOUNTS = [Mount(source=f"{HOST_PROJECT_ROOT}/transformations", target="/app", type="bind")]
+DBT_MOUNTS = [
+    Mount(
+        source=f"{normalize_host_path(HOST_PROJECT_ROOT)}/transformations",
+        target="/app",
+        type="bind",
+    )
+]
 
 default_args = {
     "owner": "data-engineering",
@@ -146,9 +153,11 @@ def ingestion_pipeline():
     dbt_staging = DbtTaskGroup(
         group_id="dbt_staging",
         project_config=ProjectConfig(
-            dbt_project_path="/opt/airflow/dbt",
+            dbt_project_path=Path("/opt/airflow/dbt"),
         ),
         profile_config=ProfileConfig(
+            profile_name="weather_pipeline",
+            target_name="dev",
             profiles_yml_filepath=Path("/opt/airflow/dbt/profiles.yml"),
         ),
         render_config=RenderConfig(
@@ -158,7 +167,6 @@ def ingestion_pipeline():
         ),
         execution_config=ExecutionConfig(
             execution_mode=ExecutionMode.DOCKER,
-            dbt_project_path="/app",
         ),
         operator_args={
             "image": DEFAULT_DBT_IMAGE,

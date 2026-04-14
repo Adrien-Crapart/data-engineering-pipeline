@@ -16,6 +16,24 @@ EXIT_CODE=0
 
 cd "$DBT_PROJECT_DIR"
 
+# Detect a failed / empty bind mount: Docker Desktop on Windows can silently
+# create an empty directory when the host source path is unreachable, which
+# wipes the WORKDIR. Fall back to the project files baked into the image.
+if [ ! -f "$DBT_PROJECT_DIR/dbt_project.yml" ]; then
+    echo "WARNING: dbt_project.yml not found at $DBT_PROJECT_DIR"
+    echo "  Bind mount may have failed (host path unreachable on Docker Desktop)."
+    echo "  Files currently at $DBT_PROJECT_DIR:"
+    ls -la "$DBT_PROJECT_DIR/" 2>/dev/null || echo "  (empty)"
+    if [ -f "/opt/dbt-project/dbt_project.yml" ]; then
+        echo "  Recovering from baked-in project files at /opt/dbt-project/ ..."
+        cp -r /opt/dbt-project/. "$DBT_PROJECT_DIR/"
+        echo "  Recovery complete."
+    else
+        echo "ERROR: No fallback project files found — rebuild the dbt image with 'just build-dbt'."
+        exit 1
+    fi
+fi
+
 # DuckDB httpfs needs the host:port without scheme
 MINIO_RAW="${MINIO_ENDPOINT:-http://minio:9000}"
 export MINIO_ENDPOINT_HOST="${MINIO_RAW#http://}"
